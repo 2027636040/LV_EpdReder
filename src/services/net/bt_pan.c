@@ -10,6 +10,9 @@
  * 链路：手机配对连接（ACL/加密）→ 延迟发起 PAN 连接（手机作 NAP）
  *       → PAN 连通后设备获得网络出口。
  *
+ * 稳定性：配对过的设备断线后自动恢复可连接状态并周期重连（10s × 6 次）；
+ *         重连定时器同时会复位挂起的连接请求，避免事件丢失后卡死。
+ *
  * 注意：对外符号统一使用 btpan_ 前缀（SDK 已占用 bt_pan_ 前缀）。
  */
 #include "bt_pan.h"
@@ -29,6 +32,10 @@
 #define PAN_THREAD_PRIORITY    20
 #define PAN_THREAD_TICK        20
 #define PAN_LOCAL_NAME_MAX     32
+
+/* 断开后的自动重连：每 10s 尝试一次，最多 6 次 */
+#define PAN_RECONNECT_DELAY_MS 10000
+#define PAN_RECONNECT_MAX      6
 
 /*---------------------------------------------------------------------------*/
 /* 内部消息 */
@@ -53,6 +60,8 @@ typedef struct
     bt_notify_device_mac_t bd_addr;
     rt_mailbox_t mailbox;
     rt_timer_t pan_connect_timer;
+    rt_timer_t reconnect_timer;
+    rt_uint8_t reconnect_attempts;
     rt_thread_t worker;
     char local_name[PAN_LOCAL_NAME_MAX];
     btpan_event_cb_t event_cb;
@@ -165,6 +174,65 @@ static void btpan_start_timer(void)
 }
 
 /*---------------------------------------------------------------------------*/
+/* 断开自动重连 */
+/*---------------------------------------------------------------------------*/
+/**
+ * @brief 重连定时器回调：对已配对设备周期性重发 PAN 连接请求。
+ * @note 运行在软件定时器线程；连接恢复后在事件回调中停止本定时器。
+ */
+static void btpan_reconnect_timeout(void *parameter)
+{
+    (void)parameter;
+
+    /* 事件丢失保护：复位挂起标志，允许重新发起 */
+    g_pan.connect_pending = RT_FALSE;
+
+    if (!g_pan.enabled || !btpan_has_peer_addr())
+        return;
+
+    if (g_pan.bt_connected || g_pan.pan_connected)
+        return; /* 已恢复 */
+
+    if (g_pan.reconnect_attempts >= PAN_RECONNECT_MAX)
+    {
+        LOG_I("pan reconnect give up (%d attempts)", g_pan.reconnect_attempts);
+        rt_timer_stop(g_pan.reconnect_timer);
+        return;
+    }
+
+    g_pan.reconnect_attempts++;
+    LOG_I("pan reconnect attempt %d/%d", g_pan.reconnect_attempts, PAN_RECONNECT_MAX);
+
+    /* 重新建立链路并连接 PAN（对已配对地址） */
+    bt_interface_conn_ext((char *)&g_pan.bd_addr, BT_PROFILE_PAN);
+}
+
+static void btpan_stop_reconnect(void)
+{
+    if (g_pan.reconnect_timer != RT_NULL)
+        rt_timer_stop(g_pan.reconnect_timer);
+
+    g_pan.reconnect_attempts = 0;
+}
+
+static void btpan_start_reconnect(void)
+{
+    g_pan.reconnect_attempts = 0;
+
+    if (g_pan.reconnect_timer == RT_NULL)
+    {
+        g_pan.reconnect_timer = rt_timer_create("pan_recon",
+                                                btpan_reconnect_timeout,
+                                                RT_NULL,
+                                                rt_tick_from_millisecond(PAN_RECONNECT_DELAY_MS),
+                                                RT_TIMER_FLAG_PERIODIC | RT_TIMER_FLAG_SOFT_TIMER);
+    }
+
+    if (g_pan.reconnect_timer != RT_NULL)
+        rt_timer_start(g_pan.reconnect_timer);
+}
+
+/*---------------------------------------------------------------------------*/
 /* 蓝牙事件回调 */
 /*---------------------------------------------------------------------------*/
 /**
@@ -196,6 +264,14 @@ static int btpan_bt_event_handle(uint16_t type, uint16_t event_id, uint8_t *data
             g_pan.pan_connected = RT_FALSE;
             btpan_reset_mailbox();
             btpan_stop_timer();
+
+            /* 恢复可被连接，并对已配对设备启动自动重连 */
+            if (g_pan.enabled && g_pan.stack_ready && btpan_has_peer_addr())
+            {
+                bt_interface_set_scan_mode(TRUE, TRUE);
+                btpan_start_reconnect();
+            }
+
             btpan_notify_state();
             break;
         }
@@ -245,6 +321,7 @@ static int btpan_bt_event_handle(uint16_t type, uint16_t event_id, uint8_t *data
                   g_pan.bd_addr.addr[3], g_pan.bd_addr.addr[2],
                   g_pan.bd_addr.addr[1], g_pan.bd_addr.addr[0]);
             g_pan.bt_connected = RT_TRUE;
+            btpan_stop_reconnect(); /* 链路已恢复，停止重连轮询 */
             btpan_notify_state();
             btpan_start_timer();
         }
@@ -252,18 +329,22 @@ static int btpan_bt_event_handle(uint16_t type, uint16_t event_id, uint8_t *data
     /* ---- PAN profile 事件 ---- */
     else if (type == BT_NOTIFY_PAN)
     {
+        bt_notify_profile_state_info_t *info = (bt_notify_profile_state_info_t *)data;
+        int res = (info != RT_NULL) ? info->res : -1;
+
         switch (event_id)
         {
         case BT_NOTIFY_PAN_PROFILE_CONNECTED:
-            LOG_I("pan connect successed");
+            LOG_I("pan connect successed (res=%d)", res);
             btpan_stop_timer();
+            btpan_stop_reconnect();
             g_pan.connect_pending = RT_FALSE;
             g_pan.pan_connected = RT_TRUE;
             btpan_notify_state();
             break;
 
         case BT_NOTIFY_PAN_PROFILE_DISCONNECTED:
-            LOG_I("pan disconnect with remote device");
+            LOG_I("pan disconnect with remote device (res=%d)", res);
             g_pan.pan_connected = RT_FALSE;
             btpan_reset_mailbox();
             btpan_notify_state();
@@ -348,6 +429,12 @@ rt_err_t btpan_init(const char *device_name)
     g_pan.enabled = RT_TRUE;
     g_pan.last_state = BTPAN_STATE_OFF;
 
+#ifdef BSP_BT_CONNECTION_MANAGER
+    /* 将 PAN 加入“手机类设备”的目标 profile 集合：
+       手机（重新）连接后，连接管理器会在合适时机自动拉起 PAN 连接 */
+    bt_cm_set_profile_target(BT_CM_PAN, BT_LINK_PHONE, 1);
+#endif
+
     LOG_I("btpan init: %s", g_pan.local_name);
 
     g_pan.mailbox = rt_mb_create("bt_app", 4, RT_IPC_FLAG_FIFO);
@@ -416,6 +503,7 @@ rt_err_t btpan_enable(bool enable)
         g_pan.pan_connected = RT_FALSE;
         btpan_reset_mailbox();
         btpan_stop_timer();
+        btpan_stop_reconnect();
     }
 
     btpan_notify_state();

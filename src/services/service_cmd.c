@@ -25,6 +25,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "lwip/netif.h"
+#include "lwip/dhcp.h"
+#include "lwip/dns.h"
+
 #include "weather.h"
 #include "bt_pan.h"
 #include "bookshelf.h"
@@ -204,6 +208,35 @@ static void cmd_pan_connect(int argc, char **argv)
     (void)argc;
     (void)argv;
     rt_kprintf("btpan_request_connect: %d\n", btpan_request_connect());
+}
+
+static void cmd_pan_ip(int argc, char **argv)
+{
+    struct netif *netif;
+    char buf[IP4ADDR_STRLEN_MAX];
+    char buf0[IP4ADDR_STRLEN_MAX];
+    char buf1[IP4ADDR_STRLEN_MAX];
+
+    (void)argc;
+    (void)argv;
+
+    /* bt_lwip 注册的 PAN 网卡名为 "b0" */
+    netif = netif_find("b0");
+    if (netif == RT_NULL)
+    {
+        rt_kprintf("PAN netif (b0) not found - bluetooth PAN not initialized\n");
+        return;
+    }
+
+    rt_kprintf("netif     : b0\n");
+    rt_kprintf("link      : %s\n", netif_is_link_up(netif) ? "up" : "down");
+    rt_kprintf("dhcp      : %s\n", dhcp_supplied_address(netif) ? "leased" : "no lease");
+    rt_kprintf("IP        : %s\n", ip4addr_ntoa_r(netif_ip4_addr(netif), buf, sizeof(buf)));
+    rt_kprintf("Netmask   : %s\n", ip4addr_ntoa_r(netif_ip4_netmask(netif), buf, sizeof(buf)));
+    rt_kprintf("Gateway   : %s\n", ip4addr_ntoa_r(netif_ip4_gw(netif), buf, sizeof(buf)));
+    rt_kprintf("DNS       : %s / %s\n",
+               ipaddr_ntoa_r(dns_getserver(0), buf0, sizeof(buf0)),
+               ipaddr_ntoa_r(dns_getserver(1), buf1, sizeof(buf1)));
 }
 
 /*---------------------------------------------------------------------------*/
@@ -411,6 +444,7 @@ static const svc_cmd_t pan_cmds[] =
     { "on",      "enable bluetooth pan service",     cmd_pan_on },
     { "off",     "disable bluetooth pan service",    cmd_pan_off },
     { "connect", "request pan connection",           cmd_pan_connect },
+    { "ip",      "show PAN netif IP address (DHCP)", cmd_pan_ip },
 };
 
 static const svc_cmd_t bookshelf_cmds[] =
