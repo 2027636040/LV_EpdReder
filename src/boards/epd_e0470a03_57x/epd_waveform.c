@@ -20,6 +20,7 @@
 
 static int g_part_disp_times = 10;      // 每 g_part_disp_times 次刷新做一次全刷，其余局刷
 static int reflesh_times = 0;
+static int s_force_full = 0;            // 一次性强制全刷标志（epd_wave_request_full 置位）
 
 /* 强制使用静态波形表（跳过 bin 文件） */
 static int force_static_wave = 0;
@@ -48,9 +49,22 @@ static const char *temp_zone_names[] = {
 };
 #define TEMP_ZONE_COUNT (sizeof(temp_zones) / sizeof(temp_zones[0]) - 1)
 
-void set_part_disp_times(int val)
+/* 设置全刷周期：每 val 次刷新做一次全刷；val<=0 等效 1（每次全刷） */
+void epd_wave_set_part_times(int val)
 {
-    g_part_disp_times = val > 0 ? val : 1;   // 0 表示每次全刷
+    g_part_disp_times = val > 0 ? val : 1;
+}
+
+/* 获取当前全刷周期 */
+int epd_wave_get_part_times(void)
+{
+    return g_part_disp_times;
+}
+
+/* 请求下一次刷新强制全刷（一次性） */
+void epd_wave_request_full(void)
+{
+    s_force_full = 1;
 }
 
 /* 获取/设置波形模式 */
@@ -165,13 +179,23 @@ uint32_t epd_wave_table_get_frames(int temperature, EpdDrawMode mode)
 {
     reflesh_times++;
 
+    // 首刷 / 一次性请求：强制全刷（清残影、开机首刷）
+    if (s_force_full || reflesh_times == 1)
+    {
+        s_force_full = 0;
+        mode = EPD_DRAW_MODE_FULL;
+    }
     // AUTO 模式：每 g_part_disp_times 次做一次全刷，其余局刷
-    if (EPD_DRAW_MODE_AUTO == mode)
+    else if (EPD_DRAW_MODE_AUTO == mode)
     {
         mode = (reflesh_times % g_part_disp_times == 0)
                ? EPD_DRAW_MODE_FULL
                : EPD_DRAW_MODE_PARTIAL;
     }
+
+    // 刷屏计划日志（验证全刷周期：每 N 次出现一次 FULL）
+    rt_kprintf("EPD: refresh #%d -> %s\n", reflesh_times,
+               (EPD_DRAW_MODE_PARTIAL == mode) ? "PARTIAL" : "FULL");
 
 #ifdef EPD_WAVEFORM_USE_BIN
     if (epd_waveform_bin_inited_ret == 0 && force_static_wave == 0)
@@ -311,6 +335,37 @@ static int cmd_wmode(int argc, char **argv)
     return 0;
 }
 MSH_CMD_EXPORT(cmd_wmode, set EPD wave mode);
+
+/* finsh 命令: parttime [n]
+ *   查看/设置全刷周期（每 n 次刷新做一次全刷；0=每次全刷）
+ */
+static int cmd_parttime(int argc, char **argv)
+{
+    if (argc < 2)
+    {
+        rt_kprintf("full refresh period: every %d refresh(es)\n", epd_wave_get_part_times());
+        rt_kprintf("usage: parttime <n>  (n>=1; 0 = every refresh is full)\n");
+        return 0;
+    }
+
+    epd_wave_set_part_times(atoi(argv[1]));
+    rt_kprintf("full refresh period set: every %d refresh(es)\n", epd_wave_get_part_times());
+    return 0;
+}
+MSH_CMD_EXPORT(cmd_parttime, get/set EPD full refresh period);
+
+/* finsh 命令: fullrefresh
+ *   请求下一次刷新强制全刷（清残影）
+ */
+static int cmd_fullrefresh(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    epd_wave_request_full();
+    rt_kprintf("next refresh will be FULL\n");
+    return 0;
+}
+MSH_CMD_EXPORT(cmd_fullrefresh, force next EPD refresh to full);
 
 /* finsh 命令: tempzone <auto|0|1|...>
  *   设置温区

@@ -5,7 +5,7 @@
  * 入口职责：
  *  1. 初始化显示子系统（LVGL/LCD，先于蓝牙，避免内存竞争）；
  *  2. 初始化数据服务（蓝牙 PAN / 天气 / 书库 / 阅读）；
- *  3. 后续在此接入 UI 框架（页面栈 / 按键导航 / 低功耗状态机）。
+ *  3. 临时验证页：按键 -> 屏幕刷新（EPD 全刷/局刷周期验证）；UI 同事接手后替换为正式页面。
  */
 #include <rtthread.h>
 #include <stdbool.h>
@@ -19,6 +19,7 @@
 #include "bookshelf.h" /* 书库管理服务      */
 #include "reader.h"    /* 阅读引擎服务      */
 #include "buttons.h"   /* 按键服务（57 ADC 按键） */
+#include "epd_waveform.h" /* EPD 波形（验证页：请求全刷） */
 
 #define DBG_TAG "main"
 #define DBG_LVL DBG_INFO
@@ -37,11 +38,62 @@ static void mem_report(const char *tag)
                (unsigned)max_used, (unsigned)(total - used));
 }
 
-/* 按键动作回调（临时：无 UI 时打印验证；UI 初始化后可用
-   buttons_set_callback() 替换为投递/分发到 UI 的处理函数） */
+/* ---- 临时验证页：按键 -> 屏幕刷新（刷新周期验证 + 标准对接模式演示） ---- */
+static lv_obj_t *s_count_label = NULL;
+static lv_obj_t *s_block = NULL;
+static int s_count = 0;
+static int s_block_pos = 0;
+
+/* 残影观察块位置（四角轮转） */
+static const int s_block_pos_tab[4][2] =
+{
+    { 40, 420 }, { 444, 420 }, { 444, 900 }, { 40, 900 }
+};
+
+/* UI 线程执行体（由 lv_async_call 调度） */
+static void verify_page_update(void *arg)
+{
+    UIAction action = (UIAction)(rt_ubase_t)arg;
+
+    if (s_count_label == NULL || s_block == NULL)
+    {
+        return;   /* 页面尚未就绪（理论上不会走到） */
+    }
+
+    switch (action)
+    {
+    case UP:
+        s_block_pos = (s_block_pos + 3) & 3;   /* 上一个位置 */
+        break;
+
+    case DOWN:
+        s_block_pos = (s_block_pos + 1) & 3;   /* 下一个位置 */
+        break;
+
+    case SELECT:
+        s_count++;
+        lv_label_set_text_fmt(s_count_label, "count: %d", s_count);
+        break;
+
+    case UPGLIDE:
+        /* 长按 KEY1：请求下一次刷新强制全刷（清残影验证） */
+        epd_wave_request_full();
+        s_count = 0;
+        lv_label_set_text(s_count_label, "count: 0 (FULL requested)");
+        break;
+
+    default:
+        break;
+    }
+
+    lv_obj_set_pos(s_block, s_block_pos_tab[s_block_pos][0], s_block_pos_tab[s_block_pos][1]);
+}
+
+/* 按键动作回调（button 库线程上下文 -> lv_async_call 切回 UI 线程） */
 static void on_ui_action(UIAction action)
 {
     rt_kprintf("[key] %s\n", buttons_action_name(action));
+    lv_async_call(verify_page_update, (void *)(rt_ubase_t)action);
 }
 
 int main(void)
@@ -81,20 +133,51 @@ int main(void)
     lv_obj_set_style_bg_color(lv_scr_act(), lv_color_white(), 0);
     lv_obj_set_style_bg_opa(lv_scr_act(), LV_OPA_COVER, 0);
 
-    lv_obj_t *label = lv_label_create(lv_scr_act());
-    lv_label_set_text(label, "EPD Reader (LVGL)");
-    lv_obj_set_style_text_color(label, lv_color_black(), 0);
-
+    /* ---- 临时验证页（UI 同事接手后整体替换） ---- */
     lv_font_t *demo_font = lvsf_font_get("DroidSansFallback", 16);
+
+    lv_obj_t *title = lv_label_create(lv_scr_act());
+    lv_label_set_text(title, "EPD Refresh Test");
+    lv_obj_set_style_text_color(title, lv_color_black(), 0);
     if (demo_font)
     {
-        lv_obj_set_style_text_font(label, demo_font, 0);
+        lv_obj_set_style_text_font(title, demo_font, 0);
     }
-    rt_kprintf("EPD Reader LVGL demo font: %s\n", demo_font ? "DroidSansFallback" : "default");
-    lv_obj_center(label);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 16);
+
+    s_count_label = lv_label_create(lv_scr_act());
+    lv_label_set_text(s_count_label, "count: 0");
+    lv_obj_set_style_text_color(s_count_label, lv_color_black(), 0);
+    if (demo_font)
+    {
+        lv_obj_set_style_text_font(s_count_label, demo_font, 0);
+    }
+    lv_obj_align(s_count_label, LV_ALIGN_TOP_MID, 0, 60);
+
+    lv_obj_t *hint = lv_label_create(lv_scr_act());
+    lv_label_set_text(hint,
+                      "KEY1/KEY3: move block\n"
+                      "KEY2: count+1\n"
+                      "long KEY1: request FULL");
+    lv_obj_set_style_text_color(hint, lv_color_black(), 0);
+    if (demo_font)
+    {
+        lv_obj_set_style_text_font(hint, demo_font, 0);
+    }
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 100);
+
+    /* 残影观察块（黑色，四角轮转） */
+    s_block = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(s_block, 200, 140);
+    lv_obj_set_style_bg_color(s_block, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_block, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_block, 0, 0);
+    lv_obj_set_style_radius(s_block, 0, 0);
+    lv_obj_set_pos(s_block, s_block_pos_tab[0][0], s_block_pos_tab[0][1]);
+
+    rt_kprintf("EPD Reader LVGL test page ready\n");
 
     lv_obj_invalidate(lv_scr_act());
-    rt_kprintf("EPD Reader LVGL UI ready, full redraw requested\n");
 
     bool first_task = true;
     while (1)
