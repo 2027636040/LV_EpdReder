@@ -10,3 +10,6 @@ __pycache__/
 
 # IDE (local settings)
 .vscode/*.log
+
+# Runtime logs (device test logs, local only)
+log/
