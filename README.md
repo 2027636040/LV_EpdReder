@@ -15,7 +15,7 @@
 | 存储 | TF 卡（/book、/font、/pic、/incoming）+ 内置 fs_root |
 
 ## 依赖
-- SiFli-SDK v2.5+，通过环境变量 `SIFLI_SDK` 指向 SDK 目录（不随本仓库提交）
+- SiFli-SDK v2.5+（已作为子模块 `SiFli-SDK/` 引入；也兼容用环境变量 `SIFLI_SDK` 指向任意 SDK 目录）
 - 屏幕驱动来源：OpenSiFli/EPD_Reader PR#39（E0470A03，含波形表）
 
 ## 构建
@@ -40,27 +40,38 @@ project\build_dpi-hdk_lb57gyd7n6_epd_hcpu\uart_download.bat
 │   ├── Kconfig / Kconfig.proj     # 屏驱与工程配置
 │   ├── proj.conf                  # 全局工程配置（含 LVGL 配置）
 │   └── dpi-hdk_lb57gyd7n6_epd_hcpu/   # 板卡专属配置（proj.conf/ptab/link）
-├── src/                           # 应用代码
-│   ├── main_lvgl.cpp              # 入口（LVGL）
-│   ├── pan.c / wheather.c         # BLE PAN 服务 / 天气服务
+├── src/                           # 应用代码（分层：ui / services / boards）
+│   ├── main.c                     # 入口（数据服务初始化 + LVGL）
+│   ├── ui/                        # 【UI 层】页面与交互框架（见 ui/README.md）
+│   ├── services/                  # 【数据服务层】提供数据接口给 UI
+│   │   ├── net/bt_pan.c|h         # 蓝牙 PAN 联网（手机热点共享）
+│   │   └── weather/weather.c|h    # 天气数据（快照/状态/事件，见 services/README.md）
 │   └── boards/
 │       ├── epd_e0470a03_57x/      # E0470A03 墨水屏驱动 + 波形逻辑 + TPS 电源
 │       ├── touch/gt967/           # GT967 触摸驱动
 │       ├── battery/               # 电量计
 │       ├── controls/              # 按键（KEY1/2/3）
-│       └── Board.* / SF32Paper.*  # 板级（文件系统/电源管理）
+│       └── board_service.c|h      # 板级（文件系统/电源管理）
 ├── font/                          # 内置中文字体（DroidSansFallback，供 LVGL freetype）
 ├── waveform/                      # 打库波形 bin + 读取库
 ├── disk/                          # 内置文件系统镜像内容
 └── RT-Thread + LVGL 墨水屏 Demo 软件需求.html
 ```
 
+## 数据服务接口（给 UI）
+- 蓝牙 PAN：`src/services/net/bt_pan.h` —— 状态查询 / 开关 / 事件
+- 天气：`src/services/weather/weather.h` —— 请求 / 快照 / 状态 / 事件 / 城市
+- 用法示例与线程约定：`src/services/README.md`
+
 ## 开发状态
 - [x] 新屏驱动与波形合入（来自 PR#39）
 - [x] 板卡工程配置（dpi-hdk_lb57gyd7n6_epd_hcpu）
-- [x] 服务层骨架（按键/触摸/电池/PAN/天气）
+- [x] 板级服务（按键/触摸/电池/电源）
+- [x] 纯 C 化（移除 C++ 抽象层）
+- [x] 数据服务层：蓝牙 PAN 联网 + 天气接口框架
+- [ ] 手机蓝牙 PAN 真机联调（天气全链路验证）
 - [ ] 切换 LVGL v9（当前为 v8 过渡分支）
-- [ ] UI 框架（页面栈 / 焦点导航 / 低功耗状态机）
+- [ ] UI 框架（页面栈 / 焦点导航 / 低功耗状态机）— UI 同事负责
 - [ ] 页面实现（锁屏/主页/书架/阅读器/设置/天气/文件传输/配网/关于）
 
 ## 开发规范

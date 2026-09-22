@@ -7,7 +7,8 @@ cwd = GetCurrentDir()
 
 if GetDepend('EPD_USE_LVGL'):
     # LVGL UI 版本（当前唯一维护目标）
-    src = ['main.c', 'pan.c', 'wheather.c']
+    # 数据服务位于 services/ 子目录（自动递归编译）
+    src = ['main.c']
 else:
     # 自研渲染器版本已移除，保留空列表以备将来扩展
     src = []

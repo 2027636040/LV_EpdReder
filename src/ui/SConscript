@@ -1,0 +1,13 @@
+Import('RTT_ROOT')
+Import('rtconfig')
+from building import *
+
+cwd = GetCurrentDir()
+
+# UI 层（页面 / 框架代码放于此目录；当前仅提供头文件与公共定义）
+src = Glob('*.c')
+CPPPATH = [cwd]
+
+group = DefineGroup('ui', src, depend = [''], CPPPATH = CPPPATH)
+
+Return('group')
