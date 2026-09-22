@@ -30,6 +30,14 @@ menu "app cache Memory configuration"
     config IMAGE_CACHE_IN_SRAM_SIZE
         int "image cache in sram size(standalone)"
         default 0
+
+    config FRAME_BUFFER_IN_PSRAM
+        bool "LVGL frame buffer in PSRAM (save L1 SRAM heap)"
+        depends on BSP_USING_PSRAM
+        default n
+        help
+            Move LVGL display buffers (buf1_1/buf1_2, ~100KB) from L1 SRAM bss to PSRAM.
+            The freed L1 SRAM increases system heap (heap starts after __bss_end).
 endmenu
 endif
 
