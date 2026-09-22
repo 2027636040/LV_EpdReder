@@ -6,8 +6,8 @@ import rtconfig
 cwd = GetCurrentDir()
 
 if GetDepend('EPD_USE_LVGL'):
-    # LVGL v9 UI 版本（当前唯一维护目标）
-    src = ['main_lvgl.cpp', 'pan.c', 'wheather.c']
+    # LVGL UI 版本（当前唯一维护目标）
+    src = ['main.c', 'pan.c', 'wheather.c']
 else:
     # 自研渲染器版本已移除，保留空列表以备将来扩展
     src = []

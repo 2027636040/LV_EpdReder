@@ -5,12 +5,9 @@ import rtconfig
 
 cwd = GetCurrentDir()
 
-if GetDepend('EPD_USE_LVGL'):
-    src = []
-else:
-    src = Glob('*.cpp')
+src = Glob('*.c')
 CPPPATH = [cwd]
-objs = DefineGroup('boards', src,depend = [''],CPPPATH = CPPPATH)
+objs = DefineGroup('boards', src, depend = [''], CPPPATH = CPPPATH)
 
 list = os.listdir(cwd)
 

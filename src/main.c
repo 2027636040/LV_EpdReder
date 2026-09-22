@@ -1,23 +1,26 @@
+/**
+ * @file main.c
+ * @brief 应用入口（LVGL 版，纯 C）
+ *
+ * 当前为最小验证程序：初始化 LVGL 并显示一行文本。
+ * 后续在此接入 UI 框架（页面栈 / 按键导航 / 低功耗状态机）。
+ */
 #include <rtthread.h>
+#include <stdbool.h>
+
 #include "littlevgl2rtt.h"
 #include "lvgl.h"
 #include "lvsf_font_manager.h"
 
-#undef DBG_LEVEL
-#undef LOG_TAG
-#define DBG_LEVEL DBG_INFO
-#define LOG_TAG "epd1.main"
-#include "rtdbg.h"
+#define DBG_TAG "main"
+#define DBG_LVL DBG_INFO
+#include <rtdbg.h>
 
-extern "C" {
 extern void lv_ex_data_pool_init(void);
-}
 
-extern "C"
+int main(void)
 {
-int main()
-{
-    rt_kprintf("EPD Reader (LVGL V8 epd1) starting...\n");
+    rt_kprintf("EPD Reader (LVGL) starting...\n");
 
     rt_err_t ret = littlevgl2rtt_init("lcd");
     if (ret != RT_EOK)
@@ -32,8 +35,9 @@ int main()
     lv_obj_set_style_bg_opa(lv_scr_act(), LV_OPA_COVER, 0);
 
     lv_obj_t *label = lv_label_create(lv_scr_act());
-    lv_label_set_text(label, "EPD Reader (LVGL V8 epd1)");
+    lv_label_set_text(label, "EPD Reader (LVGL)");
     lv_obj_set_style_text_color(label, lv_color_black(), 0);
+
     lv_font_t *demo_font = lvsf_font_get("DroidSansFallback", 16);
     if (demo_font)
     {
@@ -58,5 +62,4 @@ int main()
     }
 
     return 0;
-}
 }
