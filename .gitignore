@@ -4,9 +4,6 @@ project/.sconsign.dblite
 project/sf-pkgs/
 project/__pycache__/
 
-# Build-generated SDK gitfile placeholder
-SiFli-SDK/
-
 # Python
 __pycache__/
 *.pyc
