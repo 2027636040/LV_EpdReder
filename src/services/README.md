@@ -9,6 +9,8 @@
 |---|---|---|
 | 蓝牙 PAN 联网 | `services/net/bt_pan.h` | 手机蓝牙配对/连接、PAN 网络共享（互联网出口） |
 | 天气数据 | `services/weather/weather.h` | 经由 PAN 网络拉取并解析天气，提供「快照 + 状态 + 事件」 |
+| 书库管理 | `services/bookshelf/bookshelf.h` | 扫描 /book 目录 TXT 书籍列表（书名/大小/阅读进度） |
+| 阅读引擎 | `services/reader/reader.h` | 打开书籍、按“字节偏移”取 UTF-8 文本流、读写阅读位置 |
 
 ## 数据流
 
@@ -107,6 +109,26 @@ btpan_state_t st = btpan_get_state();
 bool net_ok = btpan_is_network_ready();
 ```
 
+### 4. 书架页 / 阅读页
+
+```c
+#include "bookshelf.h"
+#include "reader.h"
+
+/* 书架：扫描并取列表 */
+int n = bookshelf_refresh();
+bookshelf_item_t item;
+bookshelf_get(i, &item);            /* item.name / item.size / item.progress */
+
+/* 阅读：打开并分页取文本（UI 按 LVGL 度量分页） */
+reader_open(item.path);
+char buf[256];
+uint32_t next;
+int len = reader_read_text(offset, buf, sizeof(buf), &next);
+/* 渲染 buf（UTF-8），下一页用 offset = next */
+reader_set_position(offset);        /* 记录进度 */
+```
+
 ## 联调说明
 
 - 手机端操作：打开手机蓝牙 → 搜索设备 `RT-EPD-Reader` → 配对连接 →
@@ -114,12 +136,25 @@ bool net_ok = btpan_is_network_ready();
 - 设备侧自动流程：配对/加密完成 → 3 秒后自动发起 PAN 连接；
   天气请求时会再次确保网络（未连时自动请求连接并等待）。
 - 串口调试命令（msh）：
-  - `weather_refresh`：请求刷新天气
-  - `weather_city <id>`：切换城市（如 `weather_city beijing`）
-  - `bt_pan` 相关状态可在串口日志观察（`ulog` 标签 `LOG_I`）
+
+```
+svc                          # 列出所有服务与子命令
+svc weather status           # 打印天气快照（全部字段）
+svc weather refresh          # 请求刷新并等待结果后打印
+svc weather city [id]        # 查看/设置城市
+svc pan status|on|off|connect
+svc bookshelf list           # 扫描并打印书库
+svc reader open <path>       # 打开书籍
+svc reader info              # 书籍信息 + 当前位置
+svc reader read [offset] [len]  # 按偏移读取一段文本
+svc reader next [len]        # 从当前位置读取并前进
+svc reader seek <offset>     # 设置阅读位置
+```
 
 ## 待办（后续迭代）
 
 - [ ] 天气缓存持久化（重启后仍可显示上次数据）
 - [ ] 空气质量（AQI）/ 日出日落等数据源扩展
 - [ ] 城市选择的持久化（FlashDB）
+- [ ] reader：GBK / BIG5 编码检测与转换（当前仅 UTF-8 直通）
+- [ ] bookshelf / reader：阅读进度持久化（当前为内存状态）

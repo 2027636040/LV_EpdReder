@@ -603,34 +603,3 @@ const char *weather_get_city(void)
 {
     return g_city_id;
 }
-
-/*---------------------------------------------------------------------------*/
-/* FINSH 调试命令 */
-/*---------------------------------------------------------------------------*/
-static void weather_cmd_refresh(void)
-{
-    if (weather_request_refresh() != RT_EOK)
-        rt_kprintf("weather refresh request failed (service not ready)\n");
-    else
-        rt_kprintf("weather refresh requested\n");
-}
-FINSH_FUNCTION_EXPORT_ALIAS(weather_cmd_refresh, __cmd_weather_refresh, Request a weather refresh);
-
-static void weather_cmd_city(int argc, char **argv)
-{
-    if (argc < 2)
-    {
-        rt_kprintf("weather city: %s\n", weather_get_city());
-        rt_kprintf("usage: weather_city <id>, e.g. nanjing/beijing/shanghai\n");
-        return;
-    }
-
-    if (weather_set_city(argv[1]) != RT_EOK)
-    {
-        rt_kprintf("invalid city id: %s\n", argv[1]);
-        return;
-    }
-
-    rt_kprintf("weather city set to: %s\n", weather_get_city());
-}
-FINSH_FUNCTION_EXPORT_ALIAS(weather_cmd_city, __cmd_weather_city, Show or set weather city);

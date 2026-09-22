@@ -5,7 +5,7 @@ import rtconfig
 
 cwd = GetCurrentDir()
 
-src = []
+src = Glob('*.c')  # service_cmd.c 等公共服务调试命令
 CPPPATH = [cwd]
 objs = DefineGroup('services', src, depend = [''], CPPPATH = CPPPATH)
 

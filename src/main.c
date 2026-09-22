@@ -14,8 +14,10 @@
 #include "lvgl.h"
 #include "lvsf_font_manager.h"
 
-#include "bt_pan.h"  /* 蓝牙 PAN 联网服务 */
-#include "weather.h" /* 天气数据服务   */
+#include "bt_pan.h"    /* 蓝牙 PAN 联网服务 */
+#include "weather.h"   /* 天气数据服务      */
+#include "bookshelf.h" /* 书库管理服务      */
+#include "reader.h"    /* 阅读引擎服务      */
 
 #define DBG_TAG "main"
 #define DBG_LVL DBG_INFO
@@ -32,6 +34,10 @@ int main(void)
         rt_kprintf("btpan service started\n");
     if (weather_service_init() == RT_EOK)
         rt_kprintf("weather service started\n");
+    if (bookshelf_service_init() == RT_EOK)
+        rt_kprintf("bookshelf service started\n");
+    if (reader_service_init() == RT_EOK)
+        rt_kprintf("reader service started\n");
 
     rt_err_t ret = littlevgl2rtt_init("lcd");
     if (ret != RT_EOK)

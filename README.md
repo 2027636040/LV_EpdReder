@@ -45,7 +45,10 @@ project\build_dpi-hdk_lb57gyd7n6_epd_hcpu\uart_download.bat
 │   ├── ui/                        # 【UI 层】页面与交互框架（见 ui/README.md）
 │   ├── services/                  # 【数据服务层】提供数据接口给 UI
 │   │   ├── net/bt_pan.c|h         # 蓝牙 PAN 联网（手机热点共享）
-│   │   └── weather/weather.c|h    # 天气数据（快照/状态/事件，见 services/README.md）
+│   │   ├── weather/weather.c|h    # 天气数据（快照/状态/事件）
+│   │   ├── bookshelf/bookshelf.c|h# 书库管理（/book 扫描）
+│   │   ├── reader/reader.c|h      # 阅读引擎（按偏移取文本/进度）
+│   │   └── service_cmd.c          # msh 调试命令（svc，验证各接口返回）
 │   └── boards/
 │       ├── epd_e0470a03_57x/      # E0470A03 墨水屏驱动 + 波形逻辑 + TPS 电源
 │       ├── touch/gt967/           # GT967 触摸驱动
@@ -61,7 +64,10 @@ project\build_dpi-hdk_lb57gyd7n6_epd_hcpu\uart_download.bat
 ## 数据服务接口（给 UI）
 - 蓝牙 PAN：`src/services/net/bt_pan.h` —— 状态查询 / 开关 / 事件
 - 天气：`src/services/weather/weather.h` —— 请求 / 快照 / 状态 / 事件 / 城市
+- 书库：`src/services/bookshelf/bookshelf.h` —— 扫描 / 列表 / 进度
+- 阅读：`src/services/reader/reader.h` —— 打开 / 按偏移取文本 / 阅读位置
 - 用法示例与线程约定：`src/services/README.md`
+- 串口验证命令：`svc <service> <sub-command>`（直接输入 `svc` 查看全部）
 
 ## 开发状态
 - [x] 新屏驱动与波形合入（来自 PR#39）
@@ -69,6 +75,8 @@ project\build_dpi-hdk_lb57gyd7n6_epd_hcpu\uart_download.bat
 - [x] 板级服务（按键/触摸/电池/电源）
 - [x] 纯 C 化（移除 C++ 抽象层）
 - [x] 数据服务层：蓝牙 PAN 联网 + 天气接口框架
+- [x] 数据服务层：书库（bookshelf）+ 阅读（reader）接口框架
+- [x] msh 调试命令 `svc`（接口数据串口自验）
 - [ ] 手机蓝牙 PAN 真机联调（天气全链路验证）
 - [ ] 切换 LVGL v9（当前为 v8 过渡分支）
 - [ ] UI 框架（页面栈 / 焦点导航 / 低功耗状态机）— UI 同事负责
