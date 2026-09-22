@@ -1,0 +1,12 @@
+# SiFli / SCons build outputs
+project/build_*/
+project/.sconsign.dblite
+project/sf-pkgs/
+project/__pycache__/
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE (local settings)
+.vscode/*.log

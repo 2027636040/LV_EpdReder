@@ -1,0 +1,1124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>RT-Thread + LVGL 墨水屏 EPD Demo v2.0</title>
+<style>
+*{box-sizing:border-box;font-family:"Microsoft Yahei",sans-serif;margin:0;padding:0;}
+body{background:#222;color:#eee;padding:16px;}
+.container{max-width:1260px;margin:0 auto;display:grid;grid-template-columns:370px 1fr;gap:24px;}
+
+.epd-screen{
+  width:344px;height:604px;background:#fff;color:#111;
+  border:14px #444 solid;border-radius:14px;overflow:hidden;
+  position:relative;font-size:14px;line-height:1.5;
+}
+.screen-page{width:100%;height:100%;display:none;flex-direction:column;}
+.screen-page.active{display:flex;}
+.page-body{flex:1;min-height:0;overflow:auto;padding:14px 14px 0;}
+.page-footer{display:flex;gap:6px;padding:10px 14px;justify-content:space-between;flex-shrink:0;}
+.page-footer .btn{flex:1;text-align:center;margin:0;}
+/* 阅读设置悬浮面板 */
+.read-setting-panel{
+  position:absolute;left:14px;right:14px;bottom:14px;
+  background:#fff;border:2px #333 solid;padding:12px;z-index:10;display:none;
+}
+.read-setting-panel.show{display:block;}
+.rs-row{display:flex;gap:5px;margin:6px 0;justify-content:center;}
+.rs-btn{border:1px #333 solid;padding:5px 10px;cursor:pointer;background:#f7f7f7;font-size:13px;text-align:center;}
+.rs-btn:active{background:#ccc;}
+.rs-setting-opt{cursor:pointer;}
+/* 墨水屏刷新动画 */
+.epd-screen.refreshing::after{
+  content:"";position:absolute;left:0;top:0;width:100%;height:100%;
+  background:repeating-linear-gradient(0deg,#000 0px,#000 2px,#fff 2px,#fff 4px);
+  animation:epdScan 0.4s linear;z-index:99;pointer-events:none;
+}
+@keyframes epdScan{0%{opacity:1}100%{opacity:0}}
+
+.status-bar{display:flex;justify-content:space-between;font-size:12px;padding:4px 0 8px;border-bottom:1px #aaa solid;margin-bottom:10px;}
+.grid-icon{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
+.icon-item{border:1px #777 solid;padding:12px;text-align:center;border-radius:4px;cursor:pointer;transition:background .15s;}
+.icon-item:hover,.icon-item.focus{background:#ddd;}
+
+.btn-row{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;justify-content:center;}
+.btn{border:1px #444 solid;padding:7px 11px;border-radius:3px;cursor:pointer;background:#f4f4f4;color:#111;font-size:13px;text-align:center;}
+.btn.active{background:#bbb;}
+.btn:hover{background:#e0e0e0;}
+
+.list-item{border:1px #999 solid;padding:9px;margin:5px 0;border-radius:3px;cursor:pointer;transition:background .15s;}
+.list-item:hover,.list-item.focus{background:#bbb;}
+
+/* ====== 设置项通用样式 ====== */
+.setting-row{display:flex;justify-content:space-between;align-items:center;border:1px #999 solid;padding:9px 10px;margin:5px 0;border-radius:3px;cursor:pointer;transition:background .15s;}
+.setting-row:hover{background:#eee;}
+.setting-label{font-size:14px;text-align:center;flex:1;}
+.setting-val{font-size:13px;color:#555;min-width:50px;text-align:center;}
+/* 拨动开关 */
+.toggle{width:40px;height:22px;border-radius:11px;background:#bbb;position:relative;cursor:pointer;transition:background .25s;flex-shrink:0;}
+.toggle.on{background:#555;}
+.toggle::after{content:"";position:absolute;left:2px;top:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .25s;}
+.toggle.on::after{left:20px;}
+/* 加减按钮组 */
+.stepper{display:inline-flex;align-items:center;gap:6px;}
+.stepper-btn{width:26px;height:26px;border:1px #888;border-radius:3px;background:#f0f0f0;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;user-select:none;}
+.stepper-btn:active{background:#ccc;}
+.stepper-val{font-size:13px;min-width:30px;text-align:center;}
+
+/* 天气样式 */
+.weather-icon{font-size:48px;text-align:center;margin:6px 0;}
+.weather-temp{font-size:36px;font-weight:bold;text-align:center;}
+.weather-desc{text-align:center;color:#555;font-size:13px;}
+.forecast-row{display:flex;justify-content:space-between;font-size:12px;margin:3px 0;padding:3px 0;border-bottom:1px #ddd dashed;}
+.forecast-day{font-weight:bold;min-width:36px;}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;margin-top:8px;}
+.info-card{border:1px #ccc solid;border-radius:4px;padding:6px 8px;text-align:center;}
+.info-card .label{color:#888;font-size:11px;}
+.info-card .value{font-size:15px;font-weight:bold;}
+
+/* 文件传输样式 */
+.xfer-progress{width:100%;height:20px;border:1px #888 solid;border-radius:10px;overflow:hidden;margin:10px 0;background:#eee;}
+.xfer-bar{height:100%;width:0%;background:linear-gradient(90deg,#999,#555);border-radius:10px;transition:width .3s;}
+.xfer-info{font-size:12px;color:#555;text-align:center;}
+.xfer-done{color:#4a4;font-weight:bold;text-align:center;margin:8px 0;font-size:14px;}
+/* 传输文件列表项 */
+.xfer-file{border:1px #aaa solid;border-radius:4px;padding:8px;margin:4px 0;font-size:12px;transition:background .2s;}
+.xfer-file.receiving{background:#efe;border-left:3px solid #4a4;}
+.xfer-file.done{background:#eef;border-left:3px solid #48f;}
+.xfer-item{cursor:pointer;transition:outline .1s;}
+.xfer-del{display:inline-block;width:18px;height:18px;border:1px #999;border-radius:50%;text-align:center;line-height:16px;font-size:11px;cursor:pointer;color:#999;}
+.xfer-del:hover{background:#e88;border-color:#c44;color:#fff;}
+
+.popup{position:absolute;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,0.45);display:none;align-items:center;justify-content:center;z-index:50;}
+.popup.show{display:flex;}
+.popup-inner{background:#fff;color:#111;padding:18px;border-radius:6px;width:88%;text-align:center;}
+
+.ctrl-panel{background:#333;padding:16px;border-radius:8px;}
+.ctrl-group{margin-bottom:16px;}
+h3{margin-bottom:8px;font-size:16px;}
+.key-buttons{display:flex;gap:8px;margin:10px 0;}
+.key-btn{padding:10px 16px;background:#555;border:none;color:#fff;border-radius:4px;cursor:pointer;font-size:14px;}
+.key-btn:active{background:#777;}
+.state-log{background:#111;padding:10px;height:160px;overflow:auto;font-size:12px;color:#4f4;white-space:pre-wrap;}
+.info-block{border:1px #555 solid;padding:12px;border-radius:6px;margin:10px 0;font-size:12px;}
+table{width:100%;border-collapse:collapse;font-size:12px;}
+td,th{border:1px #666 solid;padding:5px;}
+
+.read-text{font-size:15px;margin-bottom:12px;line-height:1.8;}
+.read-footer{margin-top:20px;font-size:12px;color:#333;}
+.qrcode-box{border:2px solid #222;width:130px;height:130px;margin:10px auto;display:flex;align-items:center;justify-content:center;font-size:12px;text-align:center;}
+.empty-tip{text-align:center;color:#666;padding:24px 0;}
+.page-title{font-weight:bold;font-size:15px;text-align:center;margin-bottom:8px;border-bottom:1px #aaa solid;padding-bottom:6px;}
+/* 书架书籍卡片 */
+.book-card{display:flex;border:1px #aaa solid;border-radius:4px;padding:8px;margin:5px 0;cursor:pointer;transition:background .15s;}
+.book-card:hover{background:#eee;}
+.book-cover{width:36px;height:50px;border:1px #999;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;margin-right:8px;}
+.book-info{flex:1;font-size:12px;}
+.book-info .title{font-weight:bold;font-size:13px;margin-bottom:2px;}
+.book-progress{height:4px;background:#ddd;border-radius:2px;margin-top:4px;}
+.book-progress-fill{height:100%;background:#4a4;border-radius:2px;}
+/* 进度条通用 */
+.progress-bar{height:6px;background:#ddd;border-radius:3px;overflow:hidden;margin:4px 0;}
+.progress-fill{height:100%;background:#4a4;border-radius:3px;}
+/* 分页指示器 */
+.page-indicator{display:flex;justify-content:center;gap:6px;margin:6px 0;}
+.page-dot{width:8px;height:8px;border-radius:50%;background:#ccc;}
+.page-dot.active{background:#555;}
+</style>
+</head>
+<body>
+<div class="container">
+<div>
+<h3>SF32LB57GYD7N6 EPD｜竖屏1216×684</h3>
+<div class="epd-screen" id="epd">
+
+  <div class="screen-page" id="page-lock">
+    <div class="page-body" style="display:flex;flex-direction:column;align-items:center;justify-content:center;">
+      <div style="font-size:14px;color:#888;">RT-Thread EPD Reader</div>
+      <div style="font-size:36px;margin:12px 0;">📖</div>
+      <div style="font-size:28px;font-weight:bold;">Welcome</div>
+      <div style="margin-top:50px;font-size:13px;color:#444;">按 KEY2 按键唤醒设备</div>
+      <div style="font-size:11px;color:#aaa;margin-top:4px;">电量 72%</div>
+    </div>
+  </div>
+
+  <div class="screen-page" id="page-home">
+    <div class="page-body">
+      <div class="status-bar">
+        <span id="home-time">2026-09-20 17:10</span>
+        <span>📶WiFi <span id="st-wifi">●</span> &nbsp;🔵BLE <span id="st-ble">○</span> &nbsp;🔋72%</span>
+      </div>
+      <div><b>主页面 Launcher</b></div>
+      <div class="grid-icon">
+        <div class="icon-item" data-target="page-bookshelf">📖 书架</div>
+        <div class="icon-item" data-target="page-weather">🌤 天气</div>
+        <div class="icon-item" data-target="page-xfer">📂 文件传输</div>
+        <div class="icon-item" data-target="page-wifi-cfg">📡 Wi-Fi配网</div>
+        <div class="icon-item" data-target="page-settings">⚙ 设置</div>
+      </div>
+      <div style="margin-top:12px;border:1px #ccc solid;border-radius:4px;padding:8px;font-size:12px;">
+        <div style="font-weight:bold;margin-bottom:4px;">📌 快捷信息</div>
+        <div>最近阅读：The Immortal.txt <span style="color:#4a4;">(34%)</span></div>
+        <div>天气：多云 26℃ ｜ 电量：72%</div>
+      </div>
+    </div>
+    <div class="page-footer">
+      <div class="btn" id="home-lock">进入锁屏</div>
+    </div>
+  </div>
+
+  <div class="screen-page" id="page-bookshelf">
+    <div class="page-body">
+      <div><b>书架页面（/book目录）</b></div>
+      <div id="book-list">
+        <div class="book-card book-item" data-book="0" onclick="openBook(0)">
+          <div class="book-cover">📕</div>
+          <div class="book-info">
+            <div class="title">The Immortal.txt</div>
+            <div>124KB ｜ 最近阅读：今天</div>
+            <div class="book-progress"><div class="book-progress-fill" style="width:34%"></div></div>
+            <div style="font-size:11px;color:#888;">进度 34% ｜ 第93/275页</div>
+          </div>
+        </div>
+        <div class="book-card book-item" data-book="1" onclick="openBook(1)">
+          <div class="book-cover">📗</div>
+          <div class="book-info">
+            <div class="title">Novel_Demo.txt</div>
+            <div>201KB ｜ 最近阅读：3天前</div>
+            <div class="book-progress"><div class="book-progress-fill" style="width:0%"></div></div>
+            <div style="font-size:11px;color:#888;">未读 ｜ 共412页</div>
+          </div>
+        </div>
+        <div class="book-card book-item" data-book="2" onclick="openBook(2)">
+          <div class="book-cover">📘</div>
+          <div class="book-info">
+            <div class="title">Article_Short.txt</div>
+            <div>86KB ｜ 最近阅读：昨天</div>
+            <div class="book-progress"><div class="book-progress-fill" style="width:12%"></div></div>
+            <div style="font-size:11px;color:#888;">进度 12% ｜ 第8/68页</div>
+          </div>
+        </div>
+        <div class="book-card book-item" data-book="3" onclick="openBook(3)">
+          <div class="book-cover">📙</div>
+          <div class="book-info">
+            <div class="title">Notes_log.txt</div>
+            <div>42KB ｜ 最近阅读：--</div>
+            <div class="book-progress"><div class="book-progress-fill" style="width:0%"></div></div>
+            <div style="font-size:11px;color:#888;">未读 ｜ 共56页</div>
+          </div>
+        </div>
+      </div>
+      <div class="empty-tip" id="book-empty" style="display:none;">📭 未检测到TXT书籍<br><span style="font-size:12px;">请将txt文件放入TF卡 /book 目录</span></div>
+      <div style="font-size:11px;color:#888;">KEY1/KEY3 选择 ｜ KEY2 打开 ｜ 共4本书</div>
+    </div>
+    <div class="page-footer">
+      <div class="btn">上一页</div>
+      <div class="btn" onclick="gotoPage('page-home')">主页面</div>
+      <div class="btn">下一页</div>
+    </div>
+  </div>
+
+  <div class="screen-page" id="page-reader">
+    <div class="page-body">
+      <div class="read-text" id="reader-content"></div>
+      <div class="progress-bar" style="margin-top:8px;"><div class="progress-fill" id="reader-progress-fill" style="width:34%"></div></div>
+      <div class="read-footer">页码：<span id="reader-page-info">1 / 275</span> 页 ｜ <b id="reader-book-title">The Immortal.txt</b></div>
+      <div style="font-size:11px;color:#888;text-align:center;margin-top:4px;">KEY1 上一页 ｜ KEY3 下一页 ｜ KEY2 返回书架 ｜ 长按KEY1 设置</div>
+    </div>
+    <!-- 阅读设置悬浮面板，长按KEY1弹出 -->
+    <div class="read-setting-panel" id="read-set-panel">
+      <div style="text-align:center;margin-bottom:6px;"><b>阅读设置</b></div>
+      <div class="rs-row">
+        <span class="rs-btn" id="rs-set-left" style="width:28px;">&lt;</span>
+        <span class="rs-btn rs-setting-opt" style="flex:1;text-align:center;" id="rs-setting-display">触摸翻页：开</span>
+        <span class="rs-btn" id="rs-set-right" style="width:28px;">&gt;</span>
+      </div>
+      <div class="rs-row">
+        <span class="rs-btn" id="rs-page-minus5">-5</span>
+        <span class="rs-btn" id="rs-page-minus1">-1</span>
+        <span class="rs-btn" id="rs-page-num" style="min-width:50px;">1</span>
+        <span class="rs-btn" id="rs-page-plus1">+1</span>
+        <span class="rs-btn" id="rs-page-plus5">+5</span>
+      </div>
+      <div class="rs-row">
+        <span class="rs-btn" id="rs-confirm">确认</span>
+        <span class="rs-btn" id="rs-text-cfg-btn">文本设置</span>
+        <span class="rs-btn" id="rs-back-shelf">书库</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="screen-page" id="page-settings">
+    <div class="page-body">
+      <div><b>通用功能设置页面</b></div>
+      <div class="setting-row setting-item" data-key="touch"><span>触控开关：</span><div class="toggle on" id="touch-en"></div></div>
+      <div class="setting-row setting-item" data-key="timeout" data-cycle="timeout-val" data-options="1,3,5,10,15" data-unit="分钟"><span>超时关机：</span><span class="setting-val" id="timeout-val">5 分钟</span></div>
+      <div class="setting-row setting-item" data-key="fullrefresh" data-cycle="gc-cnt-val" data-options="5,8,10,15,20" data-unit="次"><span>全刷周期：</span><span class="setting-val" id="gc-cnt-val">10 次</span></div>
+      <div class="setting-row setting-item" data-key="ble"><span>蓝牙：</span><div class="toggle" id="bt-en"></div></div>
+      <div class="setting-row setting-item" data-key="wifi"><span>WIFI：</span><div class="toggle on" id="wifi-en"></div></div>
+      <div class="setting-row setting-item" data-key="netdefault" data-cycle="net-mode-val" data-options="WiFi,BLE-PAN" data-unit=""><span>默认网络：</span><span class="setting-val" id="net-mode-val">WiFi</span></div>
+      <div class="setting-row setting-item" data-key="lowpower"><span>低功耗模式：</span><div class="toggle on" id="lpm-en"></div></div>
+      <div class="setting-row" data-target="page-text-cfg"><span>进入文本设置 ›</span></div>
+      <div class="setting-row" data-target="page-about"><span>关于设备 ›</span></div>
+    </div>
+    <div class="page-footer">
+      <div class="btn" id="btn-settings-save">保存设置</div>
+      <div class="btn go-back">保存 ← 返回</div>
+    </div>
+  </div>
+
+  <div class="screen-page" id="page-text-cfg">
+    <div class="page-body">
+      <div><b>文本设置</b></div>
+      <div class="setting-row textcfg-item" data-key="font" data-cycle="font-val" data-options="Default,Song,Hei,Kai,Monospace" data-unit=""><span>字体：</span><span class="setting-val" id="font-val">Default</span></div>
+      <div class="setting-row textcfg-item" data-key="fontsize" data-cycle="fontsize-val" data-options="16,18,20,22,24,28,32,36" data-unit="px"><span>字号：</span><span class="setting-val" id="fontsize-val">24 px</span></div>
+      <div class="setting-row textcfg-item" data-key="fontweight" data-cycle="weight-val" data-options="正常,粗体,细体" data-unit=""><span>字重：</span><span class="setting-val" id="weight-val">正常</span></div>
+      <div class="setting-row textcfg-item" data-key="linespace" data-cycle="linespacing-val" data-options="1.0,1.2,1.4,1.6,1.8" data-unit="x"><span>行距：</span><span class="setting-val" id="linespacing-val">1.2x</span></div>
+      <div class="setting-row textcfg-item" data-key="margin" data-cycle="margin-val" data-options="4,8,12,16,20" data-unit="px"><span>边距：</span><span class="setting-val" id="margin-val">8 px</span></div>
+      <div class="setting-row textcfg-item" data-key="encoding" data-cycle="encoding-val" data-options="UTF-8,GBK,BIG5" data-unit=""><span>文件编码：</span><span class="setting-val" id="encoding-val">UTF-8</span></div>
+    </div>
+    <div class="page-footer">
+      <div class="btn" id="btn-text-cfg-save">确认返回</div>
+    </div>
+  </div>
+
+  <div class="screen-page" id="page-weather">
+    <div class="page-body">
+      <div class="status-bar">
+        <span id="weather-city-label">📍 南京</span>
+        <span id="weather-update-time">更新: 17:05</span>
+      </div>
+      <div class="weather-icon" id="weather-main-icon">⛅</div>
+      <div class="weather-temp" id="weather-main-temp">26℃</div>
+      <div class="weather-desc" id="weather-main-desc">多云 ｜ 体感 28℃</div>
+      <div style="text-align:center;font-size:12px;color:#666;margin:2px 0;">H:30℃ &nbsp; L:22℃ &nbsp; 风：东南风3级</div>
+      <div class="info-grid">
+        <div class="info-card"><div class="label">湿度</div><div class="value">68%</div></div>
+        <div class="info-card"><div class="label">风速</div><div class="value">12km/h</div></div>
+        <div class="info-card"><div class="label">能见度</div><div class="value">8km</div></div>
+        <div class="info-card"><div class="label">云量</div><div class="value">55%</div></div>
+        <div class="info-card"><div class="label">日出</div><div class="value">06:12</div></div>
+        <div class="info-card"><div class="label">日落</div><div class="value">18:35</div></div>
+        <div class="info-card"><div class="label">气压</div><div class="value">1013hPa</div></div>
+        <div class="info-card"><div class="label">空气</div><div class="value">良AQI62</div></div>
+      </div>
+      <div style="font-size:12px;margin-top:6px;"><b>未来三天预报</b></div>
+      <div class="forecast-row"><span class="forecast-day">明天</span><span>多云</span><span>23~31℃</span><span>东南风2级</span></div>
+      <div class="forecast-row"><span class="forecast-day">后天</span><span>晴</span><span>25~33℃</span><span>微风</span></div>
+      <div class="forecast-row"><span class="forecast-day">周一</span><span>小雨</span><span>20~27℃</span><span>东北风3级</span></div>
+      <div style="font-size:11px;color:#888;text-align:center;margin-top:4px;">数据来源：本地缓存 ｜ 区域：中国江苏</div>
+    </div>
+    <div class="page-footer">
+      <div class="btn" id="btn-citysel">城市选择</div>
+      <div class="btn" id="btn-weather-refresh">更新</div>
+      <div class="btn go-back">← 返回</div>
+    </div>
+  </div>
+
+  <div class="screen-page" id="page-citysel">
+    <div class="page-body">
+      <div><b>城市选择｜当前：<span id="city-selected-name">南京</span></b></div>
+      <div class="list-item city-opt city-item" data-city="北京" onclick="selectCity(this)">北京</div>
+      <div class="list-item city-opt city-item" data-city="上海" onclick="selectCity(this)">上海</div>
+      <div class="list-item city-opt city-item focus" data-city="南京" onclick="selectCity(this)">南京【已选】</div>
+      <div class="list-item city-opt city-item" data-city="深圳" onclick="selectCity(this)">深圳</div>
+      <div class="list-item city-opt city-item" data-city="杭州" onclick="selectCity(this)">杭州</div>
+      <div class="list-item city-opt city-item" data-city="成都" onclick="selectCity(this)">成都</div>
+      <div class="list-item city-opt city-item" data-city="广州" onclick="selectCity(this)">广州</div>
+      <div class="list-item city-opt city-item" data-city="西安" onclick="selectCity(this)">西安</div>
+    </div>
+    <div class="page-footer">
+      <div class="btn" id="btn-city-confirm">确认</div>
+      <div class="btn go-back">取消返回</div>
+    </div>
+  </div>
+
+  <div class="screen-page" id="page-xfer">
+    <div class="page-body">
+      <div><b>文件传输｜目录 /incoming/</b></div>
+      <div>已接收文件列表：</div>
+      <div id="xfer-file-list">
+        <div class="xfer-file done xfer-item" data-idx="0" onclick="selectXferFile(0)"><span>📄 background.jpg</span><span style="float:right;display:flex;align-items:center;gap:6px;">342KB ✓ <span class="xfer-del" onclick="event.stopPropagation();deleteXferFile(0)">✕</span></span></div>
+        <div class="xfer-file done xfer-item" data-idx="1" onclick="selectXferFile(1)"><span>📄 novel.txt</span><span style="float:right;display:flex;align-items:center;gap:6px;">112KB ✓ <span class="xfer-del" onclick="event.stopPropagation();deleteXferFile(1)">✕</span></span></div>
+        <div class="xfer-file done xfer-item" data-idx="2" onclick="selectXferFile(2)"><span>📄 cover_demo.png</span><span style="float:right;display:flex;align-items:center;gap:6px;">180KB ✓ <span class="xfer-del" onclick="event.stopPropagation();deleteXferFile(2)">✕</span></span></div>
+      </div>
+      <div style="font-size:11px;color:#888;text-align:center;margin-top:4px;" id="xfer-hint">KEY1/KEY3选文件 ｜ 长按KEY1/点✕删除 ｜ 共3个文件</div>
+      <!-- 模拟按键区域（灰色淡化，非产品UI） -->
+      <div style="border:1px dashed #bbb;border-radius:4px;padding:6px;margin-top:8px;background:#f9f9f9;">
+        <div style="font-size:11px;color:#999;text-align:center;margin-bottom:4px;">— 模拟按键 —</div>
+        <div style="display:flex;gap:6px;">
+          <div class="btn" id="btn-start-xfer" style="flex:1;background:#e8e8e8;color:#777;border-color:#ccc;font-size:12px;">模拟传输</div>
+          <div class="btn" id="btn-add-file" style="flex:1;background:#e8e8e8;color:#777;border-color:#ccc;font-size:12px;">模拟接收</div>
+        </div>
+      </div>
+    </div>
+    <div class="page-footer">
+      <div class="btn">上一页</div>
+      <div class="btn go-back">返回</div>
+      <div class="btn">下一页</div>
+    </div>
+  </div>
+
+  <div class="screen-page" id="page-wifi-cfg">
+    <div class="page-body">
+      <div><b>BLE Wi-Fi 配网</b></div>
+      <div class="qrcode-box">
+        <div style="font-size:11px;">
+          <div style="font-size:28px;">📱</div>
+          BLE配网信息<br>（不含WiFi密码）
+        </div>
+      </div>
+      <div style="font-size:12px;text-align:center;margin:6px 0;">手机扫码 → BLE获取WiFi列表<br>→ 选择SSID → 提交密码</div>
+      <div style="border:1px #aaa solid;border-radius:4px;padding:6px;font-size:12px;margin:6px 0;">
+        <div style="font-weight:bold;margin-bottom:4px;">已保存网络：</div>
+        <div>① HomeWiFi-5G ✅</div>
+        <div>② Office_Net ✅</div>
+      </div>
+    </div>
+    <div class="page-footer">
+      <div class="btn" id="btn-wifi-forget">忘记网络</div>
+      <div class="btn go-back">← 返回</div>
+    </div>
+  </div>
+
+  <div class="screen-page" id="page-about">
+    <div class="page-body">
+      <div><b>关于设备</b></div>
+      <div style="border:1px #aaa solid;border-radius:4px;padding:8px;font-size:12px;line-height:2;">
+        <div>设备名称：RT-Thread EPD Reader</div>
+        <div>固件版本：v2.1.0-build.20260920</div>
+        <div>芯片型号：SF32LB57</div>
+        <div>屏幕规格：GYD7N6 1216x684</div>
+        <div>内存：PSRAM 8MB ｜ Flash 16MB</div>
+        <div>存储：TF卡 最大32GB</div>
+        <div>电池：800mAh ｜ Type-C充电</div>
+        <div>连接：Wi-Fi 2.4G ｜ BLE 5.0</div>
+        <div>系统：RT-Thread v5.1.0</div>
+        <div>UI框架：LVGL v8.4</div>
+        <div style="text-align:center;color:#888;">(c) 2026 RT-Thread Studio</div>
+      </div>
+    </div>
+    <div class="page-footer">
+      <div class="btn go-back">← 返回</div>
+    </div>
+  </div>
+
+  <div class="popup" id="popup">
+    <div class="popup-inner">
+      <div id="popup-text">弹窗提示内容</div>
+      <div class="btn-row" style="margin-top:12px;">
+        <div class="btn" id="popup-ok">确定</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="key-buttons">
+<button class="key-btn" id="k1">KEY1 上</button>
+<button class="key-btn" id="k2">KEY2 确认</button>
+<button class="key-btn" id="k3">KEY3 下</button>
+<div style="margin-top:6px;padding:6px;background:#444;border-radius:4px;font-size:12px;color:#aef;">
+  当前按键功能：<span id="key-hint">KEY1 上选择 | KEY2 唤醒 | KEY3 下选择</span>
+</div>
+</div>
+<p style="font-size:12px;margin-top:6px;">操作：点击图标跳转；KEY1/KEY3模拟按键；KEY2唤醒/返回；休眠状态KEY2唤醒。</p>
+</div>
+
+<div class="ctrl-panel">
+<div class="ctrl-group">
+<h3>系统状态机模拟</h3>
+<div>当前系统状态：<span id="sys-state">ACTIVE</span></div>
+<div>页面历史栈：<span id="stack-view">["page-lock"]</span></div>
+<div class="btn-row">
+<button class="btn" id="go-standby">Standby(3s浅睡眠)</button>
+<button class="btn" id="go-deepsleep">DeepSleep深度休眠</button>
+<button class="btn" id="wakeup">按键唤醒</button>
+<button class="btn" id="sim-net-err">模拟网络异常</button>
+</div>
+<div class="state-log" id="log"></div>
+</div>
+
+<div class="ctrl-group">
+<h3>墨水屏刷新波形模式</h3>
+<table>
+<tr><th>mode</th><th>波形</th></tr>
+<tr><td>0</td><td>GC16全刷</td></tr>
+<tr><td>1</td><td>DU局刷</td></tr>
+<tr><td>3</td><td>INIT</td></tr>
+<tr><td>5</td><td>GL16</td></tr>
+<tr><td>6</td><td>A2</td></tr>
+<tr><td>7</td><td>DU4</td></tr>
+</table>
+</div>
+
+<div class="ctrl-group">
+<h3>TF卡文件目录</h3>
+<div class="info-block">
+<pre>
+/
+├─pic/        #锁屏shutdown.png、UI图标
+├─book/       #TXT书籍 + 书籍封面png
+├─font/       #TTF矢量字体文件
+└─incoming/   #蓝牙/USB下载接收文件
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<script>
+/* ==================== 全局状态 ==================== */
+let currentPageId = "page-lock";
+let sysState = "ACTIVE";
+let taskLockSleep = false;
+let pageStack = ["page-lock"];
+let standbyTimer = null;
+let batteryLevel = 72;
+let currentCity = "南京";
+
+const logDom = document.getElementById("log");
+const stateDom = document.getElementById("sys-state");
+const stackViewDom = document.getElementById("stack-view");
+
+/* ==================== 基础工具 ==================== */
+function updateStackView(){ stackViewDom.innerText = JSON.stringify(pageStack); }
+function log(msg){
+  const t = new Date().toLocaleTimeString();
+  logDom.innerHTML += `[${t}] ${msg}\n`;
+  logDom.scrollTop = logDom.scrollHeight;
+}
+function setState(s){
+  sysState = s;
+  stateDom.innerText = s;
+  log(`系统状态 → ${s}，休眠锁：${taskLockSleep?"🔒锁定":"🔓释放"}`);
+}
+function showPopup(text){
+  document.getElementById("popup-text").innerText = text;
+  document.getElementById("popup").classList.add("show");
+  selIdx = 0;
+  setTimeout(()=>updateSelection(), 50);
+}
+function hidePopup(){ document.getElementById("popup").classList.remove("show"); }
+
+/* ==================== 墨水屏刷新动画 ==================== */
+function epdRefresh(cb){
+  const epd = document.getElementById("epd");
+  epd.classList.add("refreshing");
+  setTimeout(()=>{ epd.classList.remove("refreshing"); if(cb) cb(); }, 450);
+}
+
+/* ==================== 页面跳转系统 ==================== */
+function gotoPage(pageId){
+  selIdx = 0; // 切页面重置选中
+  if(sysState === "DeepSleep"){ showPopup("设备处于DeepSleep休眠，请先唤醒！"); return; }
+  const pg = document.getElementById(pageId);
+  if(!pg){ log(`错误：页面 ${pageId} 不存在`); return; }
+  if(currentPageId !== pageId) pageStack.push(pageId);
+  epdRefresh(()=>{
+    document.querySelectorAll(".screen-page").forEach(p=>p.classList.remove("active"));
+    pg.classList.add("active");
+    currentPageId = pageId;
+    log(`页面跳转 >> ${pageId}`);
+    updateStackView();
+    // 离开阅读页关闭面板
+    readSettingOpen = false;
+    const panel = document.getElementById("read-set-panel");
+    if(panel) panel.classList.remove("show");
+    // 显示初始选中
+    setTimeout(()=>{ showInitialSelection(); updateKeyHint(); }, 50);
+  });
+}
+function goBack(){
+  if(pageStack.length <= 1){ log("栈底，不继续回退"); return; }
+  pageStack.pop();
+  const prevId = pageStack[pageStack.length-1];
+  const pg = document.getElementById(prevId);
+  if(!pg){ log(`回退目标 ${prevId} 不存在`); return; }
+  epdRefresh(()=>{
+    document.querySelectorAll(".screen-page").forEach(p=>p.classList.remove("active"));
+    pg.classList.add("active");
+    currentPageId = prevId;
+    log(`页面回退 << ${prevId}`);
+    updateStackView();
+    readSettingOpen = false;
+    const panel = document.getElementById("read-set-panel");
+    if(panel) panel.classList.remove("show");
+    setTimeout(()=>{ showInitialSelection(); updateKeyHint(); }, 50);
+  });
+}
+
+/* ==================== 绑定页面跳转 ==================== */
+document.querySelectorAll("[data-target]").forEach(el=>{
+  el.onclick = function(ev){ ev.stopPropagation(); gotoPage(this.getAttribute("data-target")); };
+});
+document.querySelectorAll(".go-back").forEach(el=>{
+  el.onclick = function(ev){ ev.stopPropagation(); goBack(); };
+});
+document.getElementById("popup-ok").onclick = hidePopup;
+
+/* ==================== 通用KEY选择器 ==================== */
+let selIdx = 0;
+const SELSelector = ".book-item, .city-opt, .setting-row, .icon-item, .list-item, .xfer-item, .page-footer .btn, .rs-btn";
+
+function getSelectableItems(pageId){
+  // 如果弹窗打开，选弹窗内的按钮
+  const popup = document.getElementById("popup");
+  if(popup && popup.classList.contains("show")){
+    return Array.from(popup.querySelectorAll(".btn")).filter(e=>e.offsetParent!==null);
+  }
+  // 如果阅读面板打开，只选面板内的按钮
+  if(readSettingOpen){
+    const panel = document.getElementById("read-set-panel");
+    return Array.from(panel.querySelectorAll(".rs-btn")).filter(e=>e.offsetParent!==null);
+  }
+  const pg = document.getElementById(pageId);
+  if(!pg) return [];
+  return Array.from(pg.querySelectorAll(SELSelector)).filter(e=>e.offsetParent!==null);
+}
+function updateSelection(){
+  const items = getSelectableItems(readSettingOpen ? "" : currentPageId);
+  items.forEach((el,i)=>{
+    const isSel = (i===selIdx);
+    el.style.outline = isSel ? "2px solid #333" : "";
+    el.style.outlineOffset = isSel ? "-1px" : "";
+    if(isSel) el.scrollIntoView({block:"nearest",behavior:"smooth"});
+  });
+}
+function showInitialSelection(){
+  selIdx = 0;
+  updateSelection();
+}
+function updateKeyHint(){
+  const el = document.getElementById("key-hint");
+  if(!el) return;
+  if(sysState === "DeepSleep"){
+    el.textContent = "KEY2 唤醒设备";
+  } else if(currentPageId === "page-lock"){
+    el.textContent = "KEY2 唤醒设备";
+  } else if(readSettingOpen){
+    el.textContent = "KEY1 上选 | KEY2 确认 | KEY3 下选";
+  } else if(currentPageId === "page-reader"){
+    el.textContent = "KEY1 上一页 | KEY2 返回书架 | KEY3 下一页 | 长按KEY1 设置";
+  } else if(currentPageId === "page-home"){
+    el.textContent = "KEY1/KEY3 选择图标 | KEY2 进入";
+  } else if(currentPageId === "page-bookshelf"){
+    el.textContent = "KEY1/KEY3 选书 | KEY2 打开 | 底部切换页";
+  } else if(currentPageId === "page-settings" || currentPageId === "page-text-cfg"){
+    el.textContent = "KEY1/KEY3 选设置项 | KEY2 切换值/进入";
+  } else if(currentPageId === "page-citysel"){
+    el.textContent = "KEY1/KEY3 选城市 | KEY2 确认";
+  } else {
+    el.textContent = "KEY1/KEY3 选择 | KEY2 确认/返回";
+  }
+}
+function keyUp(){
+  const items = getSelectableItems(readSettingOpen ? "" : currentPageId);
+  if(!items.length) return;
+  selIdx = (selIdx - 1 + items.length) % items.length;
+  updateSelection();
+}
+function keyDown(){
+  const items = getSelectableItems(readSettingOpen ? "" : currentPageId);
+  if(!items.length) return;
+  selIdx = (selIdx + 1) % items.length;
+  updateSelection();
+}
+function keyConfirm(){
+  const items = getSelectableItems(readSettingOpen ? "" : currentPageId);
+  if(items[selIdx]) items[selIdx].click();
+}
+
+let key2Timer = null;
+let key2LongPress = false;
+let readSettingOpen = false;
+let fromReadSettingToTextCfg = false;
+
+function toggleReadSettingPanel(){
+  readSettingOpen = !readSettingOpen;
+  document.getElementById("read-set-panel").classList.toggle("show", readSettingOpen);
+  if(readSettingOpen){
+    document.getElementById("rs-page-num").textContent = String(readerPage+1);
+    rsSettingIdx = 0;
+    renderRsSetting();
+    selIdx = 0;
+    updateSelection();
+    log("阅读设置面板打开");
+  } else {
+    log("阅读设置面板关闭");
+  }
+  updateKeyHint();
+}
+
+/* ==================== 按键模拟 ==================== */
+let key1Timer = null;
+let key1LongPress = false;
+document.getElementById("k1").onmousedown = ()=> key1Down();
+document.getElementById("k1").onmouseup = ()=> key1Up();
+document.getElementById("k1").ontouchstart = ()=> key1Down();
+document.getElementById("k1").ontouchend = ()=> key1Up();
+function key1Down(){
+  if(sysState === "DeepSleep" || currentPageId === "page-lock"){ return; }
+  key1LongPress = false;
+  key1Timer = setTimeout(()=>{ key1LongPress = true; }, 600);
+}
+function key1Up(){
+  clearTimeout(key1Timer);
+  if(key1LongPress){
+    if(currentPageId === "page-reader"){
+      toggleReadSettingPanel();
+    } else if(currentPageId === "page-xfer"){
+      // 长按KEY1删除选中文件
+      const items = getSelectableItems("page-xfer");
+      if(items[selIdx] && items[selIdx].classList.contains("xfer-item")){
+        const idx = parseInt(items[selIdx].getAttribute("data-idx"));
+        deleteXferFile(idx);
+      }
+    }
+    return;
+  }
+  // 短按KEY1：阅读页(无面板)上一页 / 面板内或其它页上移选择
+  if(currentPageId === "page-reader" && !readSettingOpen){ readerPrevPage(); return; }
+  keyUp();
+}
+document.getElementById("k3").onmousedown = ()=> key3Down();
+document.getElementById("k3").onmouseup = ()=> key3Up();
+document.getElementById("k3").ontouchstart = ()=> key3Down();
+document.getElementById("k3").ontouchend = ()=> key3Up();
+let key3Timer = null;
+let key3LongPress = false;
+function key3Down(){
+  if(sysState === "DeepSleep" || currentPageId === "page-lock"){ return; }
+  key3LongPress = false;
+  key3Timer = setTimeout(()=>{ key3LongPress = true; }, 600);
+}
+function key3Up(){
+  clearTimeout(key3Timer);
+  if(key3LongPress){ return; }
+  // 短按KEY3：阅读页(无面板)下一页 / 面板内或其它页下移选择
+  if(currentPageId === "page-reader" && !readSettingOpen){ readerNextPage(); return; }
+  keyDown();
+}
+// KEY2: 短按=确认, 长按=阅读设置(阅读页)
+document.getElementById("k2").onmousedown = ()=> key2Down();
+document.getElementById("k2").onmouseup = ()=> key2Up();
+document.getElementById("k2").ontouchstart = ()=> key2Down();
+document.getElementById("k2").ontouchend = ()=> key2Up();
+let key2Wakeup = false;
+function key2Down(){
+  key2Wakeup = false;
+  if(sysState === "DeepSleep" || currentPageId === "page-lock"){
+    setState("ACTIVE"); pageStack = ["page-home"]; gotoPage("page-home"); selIdx=0;
+    key2Wakeup = true;
+    setTimeout(updateKeyHint, 100);
+    return;
+  }
+  key2LongPress = false;
+  key2Timer = setTimeout(()=>{ key2LongPress = true; }, 600);
+}
+function key2Up(){
+  clearTimeout(key2Timer);
+  if(key2Wakeup) return; // 唤醒操作不触发确认
+  if(key2LongPress){
+    if(currentPageId === "page-reader"){
+      toggleReadSettingPanel();
+    }
+    return;
+  }
+  // 短按KEY2 = 确认
+  if(readSettingOpen){
+    // 阅读面板内：KEY2=点击当前选中的面板按钮
+    keyConfirm();
+    return;
+  }
+  // 阅读页：KEY2=返回书架
+  if(currentPageId === "page-reader"){
+    renderReaderPage(); // 应用翻页进度
+    goBack();
+    return;
+  }
+  keyConfirm();
+}
+
+/* ==================== 系统控制 ==================== */
+document.getElementById("go-standby").onclick = ()=>{
+  if(taskLockSleep){ showPopup("存在运行任务，持有休眠锁，不允许Standby"); return; }
+  setState("Standby");
+  standbyTimer = setTimeout(()=>{ log("Standby → 自动进入浅睡眠"); }, 3000);
+  showPopup("进入Standby状态，3秒后浅睡眠");
+};
+document.getElementById("go-deepsleep").onclick = ()=>{
+  if(taskLockSleep){ showPopup("持有休眠锁，禁止DeepSleep！"); return; }
+  setState("DeepSleep");
+  showPopup("DeepSleep：仅按键外设供电，其余断电");
+};
+document.getElementById("wakeup").onclick = ()=>{
+  if(standbyTimer){ clearTimeout(standbyTimer); standbyTimer = null; }
+  setState("ACTIVE");
+  if(currentPageId === "page-lock"){ pageStack = ["page-home"]; gotoPage("page-home"); }
+  log("按键唤醒恢复");
+};
+document.getElementById("home-lock").onclick = ()=>{
+  gotoPage("page-lock"); setState("ScreenSaver");
+  log("超时进入锁屏屏保");
+};
+document.getElementById("sim-net-err").onclick = showPopup.bind(null, "网络异常！断网，加载上一次缓存天气数据");
+
+/* ==================== 设置页交互 ==================== */
+// 拨动开关
+document.querySelectorAll(".toggle").forEach(el=>{
+  el.onclick = function(ev){
+    ev.stopPropagation();
+    this.classList.toggle("on");
+    const id = this.id;
+    const on = this.classList.contains("on");
+    log(`开关 ${id} → ${on?"开":"关"}`);
+  };
+});
+// 含toggle的setting-row：点击行时也切换toggle
+document.querySelectorAll(".setting-row").forEach(row=>{
+  const toggle = row.querySelector(".toggle");
+  if(toggle){
+    row.addEventListener("click", function(){
+      toggle.classList.toggle("on");
+      const on = toggle.classList.contains("on");
+      log(`开关 ${toggle.id} → ${on?"开":"关"}`);
+    });
+  }
+});
+// 循环选项
+document.querySelectorAll("[data-cycle]").forEach(row=>{
+  row.onclick = function(ev){
+    ev.stopPropagation();
+    const valId = this.getAttribute("data-cycle");
+    const opts = this.getAttribute("data-options").split(",");
+    const unit = this.getAttribute("data-unit") || "";
+    const el = document.getElementById(valId);
+    if(!el) return;
+    let cur = el.textContent.replace(unit,"").trim();
+    let idx = opts.indexOf(cur);
+    idx = (idx + 1) % opts.length;
+    el.textContent = opts[idx] + (unit ? " " + unit : "");
+    log(`设置 ${valId} → ${opts[idx]}`);
+  };
+});
+// 步进器
+document.querySelectorAll("[data-stepper]").forEach(row=>{
+  const min = parseInt(row.getAttribute("data-min"));
+  const max = parseInt(row.getAttribute("data-max"));
+  const step = parseInt(row.getAttribute("data-step"));
+  const unit = row.getAttribute("data-unit") || "";
+  const valId = row.getAttribute("data-stepper");
+  row.querySelectorAll("[data-stepper-btn]").forEach(btn=>{
+    btn.onclick = function(ev){
+      ev.stopPropagation();
+      const el = document.getElementById(valId);
+      if(!el) return;
+      let val = parseInt(el.textContent);
+      if(this.textContent.trim() === "−") val = Math.max(min, val - step);
+      else val = Math.min(max, val + step);
+      el.textContent = val + " " + unit;
+      log(`步进 ${valId} → ${val}${unit}`);
+    };
+  });
+});
+// 设置页保存
+document.getElementById("btn-settings-save").onclick = ()=>{
+  log("设置已保存到 Flash");
+  showPopup("设置保存成功！");
+};
+
+/* ==================== 天气数据 ==================== */
+const weatherData = {
+  "南京":{icon:"⛅",temp:"26℃",desc:"多云 ｜ 体感 28℃",hi:"30℃",lo:"22℃",wind:"东南风3级",humid:"68%",speed:"12km/h",vis:"8km",cloud:"55%",sunr:"06:12",suns:"18:35",pres:"1013hPa",aqi:"良 AQI62",f1:"⛅ 多云 23~31℃",f2:"🌤 晴 25~33℃",f3:"🌧 小雨 20~27℃"},
+  "北京":{icon:"☀️",temp:"28℃",desc:"晴 ｜ 体感 30℃",hi:"32℃",lo:"20℃",wind:"北风2级",humid:"45%",speed:"8km/h",vis:"15km",cloud:"10%",sunr:"06:05",suns:"18:42",pres:"1015hPa",aqi:"良 AQI78",f1:"☀️ 晴 22~34℃",f2:"⛅ 多云 21~30℃",f3:"☀️ 晴 24~35℃"},
+  "上海":{icon:"🌦",temp:"25℃",desc:"小雨 ｜ 体感 27℃",hi:"28℃",lo:"22℃",wind:"东风4级",humid:"82%",speed:"18km/h",vis:"5km",cloud:"75%",sunr:"05:58",suns:"18:28",pres:"1010hPa",aqi:"优 AQI42",f1:"🌧 中雨 20~25℃",f2:"🌦 阵雨 21~27℃",f3:"⛅ 多云 23~30℃"},
+  "深圳":{icon:"⛈",temp:"30℃",desc:"雷阵雨 ｜ 体感 34℃",hi:"33℃",lo:"26℃",wind:"南风3级",humid:"88%",speed:"15km/h",vis:"4km",cloud:"80%",sunr:"06:10",suns:"18:30",pres:"1008hPa",aqi:"良 AQI65",f1:"⛈ 雷阵雨 25~31℃",f2:"🌧 中雨 24~29℃",f3:"🌤 多云转晴 26~33℃"},
+  "杭州":{icon:"🌤",temp:"27℃",desc:"多云转晴 ｜ 体感 29℃",hi:"31℃",lo:"23℃",wind:"东南风2级",humid:"72%",speed:"10km/h",vis:"10km",cloud:"40%",sunr:"05:56",suns:"18:25",pres:"1012hPa",aqi:"优 AQI38",f1:"☀️ 晴 24~32℃",f2:"⛅ 多云 23~30℃",f3:"🌤 晴转多云 25~33℃"},
+  "成都":{icon:"☁️",temp:"22℃",desc:"阴天 ｜ 体感 23℃",hi:"25℃",lo:"18℃",wind:"微风",humid:"78%",speed:"5km/h",vis:"6km",cloud:"90%",sunr:"06:28",suns:"18:50",pres:"998hPa",aqi:"良 AQI85",f1:"🌧 小雨 17~23℃",f2:"☁️ 阴 18~24℃",f3:"🌤 多云转阴 19~26℃"},
+  "广州":{icon:"🌧",temp:"29℃",desc:"中雨 ｜ 体感 33℃",hi:"32℃",lo:"25℃",wind:"南风4级",humid:"85%",speed:"20km/h",vis:"3km",cloud:"85%",sunr:"06:08",suns:"18:32",pres:"1006hPa",aqi:"良 AQI72",f1:"🌧 大雨 24~28℃",f2:"⛈ 雷阵雨 23~30℃",f3:"⛅ 多云 26~33℃"},
+  "西安":{icon:"🌤",temp:"24℃",desc:"晴间多云 ｜ 体感 25℃",hi:"29℃",lo:"16℃",wind:"西北风2级",humid:"50%",speed:"7km/h",vis:"12km",cloud:"30%",sunr:"06:20",suns:"18:38",pres:"1016hPa",aqi:"良 AQI92",f1:"☀️ 晴 18~30℃",f2:"☀️ 晴 17~31℃",f3:"🌤 多云 19~28℃"}
+};
+function updateWeather(city){
+  const d = weatherData[city];
+  if(!d) return;
+  document.getElementById("weather-main-icon").textContent = d.icon;
+  document.getElementById("weather-main-temp").textContent = d.temp;
+  document.getElementById("weather-main-desc").textContent = d.desc;
+  document.getElementById("weather-city-label").textContent = "📍 " + city;
+  document.getElementById("weather-update-time").textContent = "更新: " + new Date().getHours() + ":" + String(new Date().getMinutes()).padStart(2,"0");
+  const grid = document.querySelector("#page-weather .info-grid");
+  const cards = [
+    ["💧 湿度", d.humid], ["🌬 风速", d.speed], ["👁 能见度", d.vis], ["☁ 云量", d.cloud],
+    ["🌅 日出", d.sunr], ["🌇 日落", d.suns], ["🌡 气压", d.pres], ["🌿 空气", d.aqi]
+  ];
+  grid.innerHTML = cards.map(c=>`<div class="info-card"><div class="label">${c[0]}</div><div class="value">${c[1]}</div></div>`).join("");
+  const forecast = document.querySelector("#page-weather").querySelectorAll(".forecast-row");
+  const fKeys = ["f1","f2","f3"];
+  const fLabels = ["明天","后天","周一"];
+  if(forecast.length >= 3){
+    forecast.forEach((row,i)=>{
+      const parts = d[fKeys[i]].split(" ");
+      row.innerHTML = `<span class="forecast-day">${fLabels[i]}</span><span>${parts[0]} ${parts[1]}</span><span>${parts[2]}</span><span>${parts[3]||""}</span>`;
+    });
+  }
+}
+
+/* ==================== 城市选择 ==================== */
+function selectCity(el){
+  document.querySelectorAll(".city-opt").forEach(c=>{
+    c.classList.remove("focus");
+    c.textContent = c.getAttribute("data-city");
+  });
+  el.classList.add("focus");
+  el.textContent = el.getAttribute("data-city") + " ✅";
+  currentCity = el.getAttribute("data-city");
+  document.getElementById("city-selected-name").textContent = currentCity;
+  log(`城市选择 → ${currentCity}`);
+}
+document.getElementById("btn-city-confirm").onclick = ()=>{
+  updateWeather(currentCity);
+  log(`天气更新为 ${currentCity}`);
+  goBack();
+};
+document.getElementById("btn-citysel").onclick = ()=> gotoPage("page-citysel");
+document.getElementById("btn-weather-refresh").onclick = ()=>{
+  updateWeather(currentCity);
+  log(`天气刷新请求 ${currentCity}，使用WiFi网络`);
+  showPopup(`正在刷新 ${currentCity} 天气数据...\n超时将使用本地缓存`);
+};
+
+/* ==================== 书架 & 阅读器 ==================== */
+const bookData = [
+  {title:"The Immortal.txt", pages:275, progress:34, page:93,
+   content:["Solomon saith: There is no new thing upon the earth.\nSo that as Plato had an imagination, that all knowledge was but remembrance; so Solomon given his sentence, that all novelty is but oblivion.\n\nVanity of vanities, saith the preacher, vanity of vanities; all is vanity.\nWhat profit hath a man of all his labour which he taketh under the sun?\n\nOne generation passeth away, and another generation cometh: but the earth abideth for ever.\nThe sun also ariseth, and the sun goeth down, and hasteth to his place where he arose.\n\nThe wind goeth toward the south, and turneth about unto the north; it whirleth about continually, and the wind returneth again according to his circuits.",
+   "All the rivers run into the sea; yet the sea is not full; unto the place from whence the rivers come, thither they return again.\nAll things are full of labour; man cannot utter it: the eye is not satisfied with seeing, nor the ear filled with hearing.\n\nThe thing that hath been, it is that which shall be; and that which is done is that which shall be done: and there is no new thing under the sun.\nIs there any thing whereof it may be said, See, this is new? it hath been already of old time, which was before us.",
+   "There is no remembrance of former things; and also of the things that are to come shall there be no remembrance of those things that are to come with those that shall come after.\n\nI the Preacher was king over Israel in Jerusalem.\nAnd I gave my heart to seek and search out by wisdom concerning all things that are done under heaven: this sore travail hath God given to the sons of man to be exercised therewith.\n\nI have seen all the works that are done under the sun; and, behold, all is vanity and vexation of spirit.\nThat which is crooked cannot be made straight: and that which is wanting cannot be numbered."]},
+  {title:"Novel_Demo.txt", pages:412, progress:0, page:0,
+   content:["Chapter 1: The Beginning\n\nThe morning sun cast long shadows across the empty street. It was the kind of quiet that only exists in small towns, where everyone knows everyone and secrets travel faster than the wind.\n\nShe stood at the corner of Main Street and Fifth Avenue, clutching the letter that would change everything. The paper was worn from being folded and unfolded so many times that the creases had become transparent.\n\n\"Are you sure about this?\" he asked, his voice barely above a whisper.\n\nShe nodded. \"There's no going back now.\"\n\nThe wind picked up, sending a cascade of autumn leaves dancing across the pavement. Somewhere in the distance, a church bell tolled three times.",
+   "Chapter 2: The Journey\n\nThe train pulled out of the station at precisely 3:15 PM, as scheduled. Through the window, the landscape transformed from urban sprawl to rolling countryside.\n\nShe found her seat by the window and opened the book she'd been meaning to read for months. But the words blurred together, her mind elsewhere.\n\nThe conductor appeared, punching tickets with practiced efficiency. \"Next stop, Millbrook,\" he announced.\n\nMillbrook. The name alone sent a shiver down her spine. It had been fifteen years since she'd last been there. Fifteen years since the incident that had shaped her entire life."]},
+  {title:"Article_Short.txt", pages:68, progress:12, page:8,
+   content:["The Future of Embedded Systems\n\nEmbedded systems are evolving rapidly with the convergence of IoT, AI, and edge computing. Modern microcontrollers now feature built-in wireless connectivity, enabling devices to communicate without external modules.\n\nRT-Thread, an open-source real-time operating system, provides a robust platform for developing embedded applications. Its component-based architecture allows developers to include only the modules they need, optimizing resource usage.\n\nE-paper displays represent a unique intersection of embedded technology and user experience. Their bi-stable nature means they consume power only when refreshing, making them ideal for battery-powered devices.\n\nThe combination of RT-Thread with LVGL (Light and Versatile Graphics Library) enables rich graphical interfaces on resource-constrained devices, bringing smartphone-like interactions to embedded products."]},
+  {title:"Notes_log.txt", pages:56, progress:0, page:0,
+   content:["Developer Notes - RT-Thread EPD Project\n\n2026-09-15: Initial hardware bring-up successful. SF32LB57 configured with 8MB PSRAM.\n\n2026-09-16: E-paper driver integrated. GC16 and DU waveform modes verified.\n\n2026-09-17: LVGL v8.4 ported to RT-Thread. Framebuffer double-buffering enabled.\n\n2026-09-18: BLE stack functional. SPP profile tested with Android device.\n\n2026-09-19: Book reader module complete. TXT parsing with UTF-8 and GBK support.\n\n2026-09-20: Weather module integrated. OpenWeatherMap API via HTTP client."]}
+];
+let readerPage = 0;
+let readerBookIdx = 0;
+function openBook(idx){
+  readerBookIdx = idx;
+  readerPage = 0;
+  const book = bookData[idx];
+  document.getElementById("reader-book-title").textContent = book.title;
+  renderReaderPage();
+  gotoPage("page-reader");
+  log(`打开书籍：${book.title}`);
+}
+function renderReaderPage(){
+  const book = bookData[readerBookIdx];
+  const contentIdx = readerPage % book.content.length;
+  const text = book.content[contentIdx];
+  const el = document.getElementById("reader-content");
+  el.innerHTML = text.split("\n\n").map(p=>`<p style="margin-bottom:8px;">${p}</p>`).join("");
+  document.getElementById("reader-page-info").textContent = `${readerPage+1} / ${book.pages}`;
+  const pct = Math.round((readerPage / book.pages) * 100);
+  document.getElementById("reader-progress-fill").style.width = pct + "%";
+}
+function readerNextPage(){
+  const book = bookData[readerBookIdx];
+  if(readerPage < book.pages - 1){ readerPage++; epdRefresh(()=>renderReaderPage()); log(`翻页 → ${readerPage+1}`); }
+  else log("已是最后一页");
+}
+function readerPrevPage(){
+  if(readerPage > 0){ readerPage--; epdRefresh(()=>renderReaderPage()); log(`翻页 → ${readerPage+1}`); }
+  else log("已是第一页");
+}
+/* ==================== 阅读设置面板 ==================== */
+const rsSettings = [
+  {key:"touch", label:"触摸翻页", options:["开","关"], current:0},
+  {key:"refresh", label:"全刷周期", options:["每次","5次","10次","20次"], current:2},
+  {key:"timeout", label:"超时关机", options:["5分钟","10分钟","30分钟","不关机"], current:0}
+];
+let rsSettingIdx = 0; // 当前选中的设置项索引
+
+function renderRsSetting(){
+  const s = rsSettings[rsSettingIdx];
+  document.getElementById("rs-setting-display").textContent = s.label + "：" + s.options[s.current];
+}
+// 点击设置显示区也可切换值
+document.getElementById("rs-setting-display").onclick = ()=>{
+  const s = rsSettings[rsSettingIdx];
+  s.current = (s.current + 1) % s.options.length;
+  renderRsSetting();
+  log(s.label + " → " + s.options[s.current]);
+};
+document.getElementById("rs-set-left").onclick = ()=>{
+  // 左键：切换设置项（上一个）
+  rsSettingIdx = (rsSettingIdx - 1 + rsSettings.length) % rsSettings.length;
+  renderRsSetting();
+  log("阅读设置 ← " + rsSettings[rsSettingIdx].label);
+};
+document.getElementById("rs-set-right").onclick = ()=>{
+  // 右键：切换到下一个设置项
+  rsSettingIdx = (rsSettingIdx + 1) % rsSettings.length;
+  renderRsSetting();
+  log("阅读设置 → " + rsSettings[rsSettingIdx].label);
+};
+document.getElementById("rs-confirm").onclick = ()=>{
+  readSettingOpen = false;
+  document.getElementById("read-set-panel").classList.remove("show");
+  renderReaderPage(); // 应用翻页
+  log("阅读设置确认，面板关闭");
+};
+document.getElementById("rs-page-minus1").onclick = ()=>{
+  if(readerPage > 0){ readerPage--; document.getElementById("rs-page-num").textContent = String(readerPage+1); }
+};
+document.getElementById("rs-page-plus1").onclick = ()=>{
+  const book = bookData[readerBookIdx];
+  if(readerPage < book.pages-1){ readerPage++; document.getElementById("rs-page-num").textContent = String(readerPage+1); }
+};
+document.getElementById("rs-page-minus5").onclick = ()=>{
+  readerPage = Math.max(0, readerPage-5); document.getElementById("rs-page-num").textContent = String(readerPage+1);
+};
+document.getElementById("rs-page-plus5").onclick = ()=>{
+  const book = bookData[readerBookIdx];
+  readerPage = Math.min(book.pages-1, readerPage+5); document.getElementById("rs-page-num").textContent = String(readerPage+1);
+};
+document.getElementById("rs-text-cfg-btn").onclick = ()=>{
+  fromReadSettingToTextCfg = true;
+  readSettingOpen = false;
+  document.getElementById("read-set-panel").classList.remove("show");
+  gotoPage("page-text-cfg");
+  log("阅读设置 → 文本设置");
+};
+document.getElementById("rs-back-shelf").onclick = ()=>{
+  readSettingOpen = false;
+  document.getElementById("read-set-panel").classList.remove("show");
+  renderReaderPage();
+  goBack();
+  log("阅读设置 → 返回书库");
+};
+
+/* ==================== 从阅读面板跳转文本设置 ==================== */
+fromReadSettingToTextCfg = false;
+document.querySelectorAll("[data-target='page-text-cfg']").forEach(el=>{
+  el.onclick = function(ev){
+    ev.stopPropagation();
+    fromReadSettingToTextCfg = (currentPageId === "page-reader");
+    gotoPage("page-text-cfg");
+  };
+});
+document.getElementById("btn-text-cfg-save").onclick = ()=>{
+  log("文本设置已保存");
+  if(fromReadSettingToTextCfg){
+    fromReadSettingToTextCfg = false;
+    goBack(); // 返回阅读页
+    // 打开阅读设置面板
+    setTimeout(()=>{
+      readSettingOpen = true;
+      document.getElementById("read-set-panel").classList.add("show");
+      document.getElementById("rs-page-num").textContent = String(readerPage+1);
+      renderRsSetting();
+    }, 500);
+  } else {
+    goBack();
+  }
+};
+
+// 书架空状态（控制台模拟）
+let bookEmpty = false;
+
+/* ==================== 文件传输完整模拟 ==================== */
+let xferRunning = false;
+let xferTimer = null;
+let xferFiles = [
+  {name:"background.jpg", size:"342KB", done:true},
+  {name:"novel.txt", size:"112KB", done:true},
+  {name:"cover_demo.png", size:"180KB", done:true}
+];
+let xferFileCounter = 3;
+
+function renderXferList(){
+  const el = document.getElementById("xfer-file-list");
+  el.innerHTML = xferFiles.map((f,i)=>`<div class="xfer-file ${f.done?'done':''} xfer-item" data-idx="${i}" onclick="selectXferFile(${i})"><span>📄 ${f.name}</span><span style="float:right;display:flex;align-items:center;gap:6px;">${f.size} ${f.done?'✓':''} <span class="xfer-del" onclick="event.stopPropagation();deleteXferFile(${i})">✕</span></span></div>`).join("");
+  // 更新文件计数
+  const hint = document.getElementById("xfer-hint");
+  if(hint) hint.textContent = `KEY1/KEY3选文件 ｜ 长按KEY1/点✕删除 ｜ 共${xferFiles.length}个文件`;
+  setTimeout(showInitialSelection, 50);
+}
+function selectXferFile(idx){
+  // 触摸点击选中文件
+  const items = getSelectableItems("page-xfer");
+  selIdx = idx;
+  updateSelection();
+}
+function deleteXferFile(idx){
+  if(idx < 0 || idx >= xferFiles.length) return;
+  const name = xferFiles[idx].name;
+  xferFiles.splice(idx, 1);
+  renderXferList();
+  log(`删除文件：${name}`);
+  showPopup("已删除文件：" + name);
+}
+
+document.getElementById("btn-start-xfer").onclick = ()=>{
+  if(xferRunning) return;
+  xferRunning = true;
+  taskLockSleep = true;
+  setState("ACTIVE");
+  const newFile = {name:"demo_book_" + (++xferFileCounter) + ".txt", size:"0KB", done:false};
+  xferFiles.push(newFile);
+  renderXferList();
+  log(`文件传输开始：${newFile.name}，休眠锁开启`);
+  // 用弹窗显示进度
+  const popupText = document.getElementById("popup-text");
+  const origText = popupText.innerHTML;
+  popupText.innerHTML = `<div style="font-weight:bold;margin-bottom:6px;">📂 文件传输中</div>
+    <div id="xfer-popup-fname">正在接收: ${newFile.name}</div>
+    <div class="xfer-progress" style="margin:10px 0;"><div class="xfer-bar" id="xfer-bar-popup" style="width:0%"></div></div>
+    <div id="xfer-popup-info" style="font-size:12px;">0% ｜ 计算中...</div>`;
+  document.getElementById("popup").classList.add("show");
+  selIdx = 0;
+  const bar = document.getElementById("xfer-bar-popup");
+  const info = document.getElementById("xfer-popup-info");
+  let progress = 0;
+  const totalSize = Math.floor(Math.random()*200+50);
+  xferTimer = setInterval(()=>{
+    const speed = Math.floor(Math.random()*30+20);
+    progress = Math.min(100, progress + Math.floor(Math.random()*6+2));
+    bar.style.width = progress + "%";
+    const recv = Math.round(totalSize * progress / 100);
+    const remain = progress >= 100 ? "完成" : Math.round((totalSize-recv)/speed*10)/10 + "s";
+    info.textContent = `${progress}% ｜ ${speed}KB/s ｜ 已接收 ${recv}KB/${totalSize}KB ｜ 剩余 ${remain}`;
+    if(progress >= 100){
+      clearInterval(xferTimer); xferTimer=null; xferRunning=false; taskLockSleep=false;
+      newFile.done = true; newFile.size = totalSize + "KB";
+      renderXferList();
+      popupText.innerHTML = `<div style="font-weight:bold;margin-bottom:6px;">✅ 文件接收完成</div>
+        <div>${newFile.name}</div><div style="font-size:12px;color:#666;">${totalSize}KB ｜ 已保存至 /incoming/</div>`;
+      log(`传输完成：${newFile.name} (${totalSize}KB)`);
+    }
+  }, 300);
+};
+document.getElementById("btn-add-file").onclick = ()=>{
+  const exts = [".jpg",".txt",".png",".pdf",".epub"];
+  const names = ["photo","note","article","story","cover","wallpaper","music"];
+  const name = names[Math.floor(Math.random()*names.length)] + "_" + (++xferFileCounter) + exts[Math.floor(Math.random()*exts.length)];
+  const size = Math.floor(Math.random()*500+10) + "KB";
+  xferFiles.push({name:name, size:size, done:true});
+  renderXferList();
+  log(`模拟接收文件：${name} (${size})`);
+};
+
+/* ==================== Wi-Fi 配网 ==================== */
+document.getElementById("btn-wifi-forget").onclick = ()=>{
+  showPopup("已忘记所有保存的Wi-Fi网络，重启配网流程");
+  log("忘记所有网络");
+};
+
+/* ==================== 初始化 ==================== */
+gotoPage("page-lock");
+log("墨水屏交互演示已加载 v2.0");
+updateStackView();
+</script>
+</body>
+</html>

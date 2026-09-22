@@ -1,0 +1,164 @@
+#APP specific configuration.
+
+comment "------------Project configuration-----------"
+
+config CUSTOM_MEM_MAP
+    bool 
+	select custom_mem_map
+	default y    
+
+config EPD_USE_LVGL
+    bool "Use LVGL framework for EPD rendering (epd1 version)"
+    default n
+    select PKG_USING_LITTLEVGL2RTT
+    help
+        Enable LVGL framework for UI rendering instead of custom Renderer.
+        This is the epd1 version that uses LVGL widgets and display driver.
+
+if EPD_USE_LVGL
+menu "app cache Memory configuration"
+    config IMAGE_CACHE_IN_PSRAM_SIZE
+        int "image cache in psram size(standalone)"
+        depends on BSP_USING_PSRAM
+        default 6291456
+
+    config IMAGE_CACHE_IN_PSRAM_SIZE
+        int
+        depends on !BSP_USING_PSRAM
+        default 0
+
+    config IMAGE_CACHE_IN_SRAM_SIZE
+        int "image cache in sram size(standalone)"
+        default 0
+endmenu
+endif
+
+if !EPD_USE_LVGL
+choice EPD_EPUB_COLOR_DEPTH
+	prompt "Select output framebuffer color depth"
+	default EPDIY_EPUB_1BPP if LCD_USING_EPD_OPMO37A3
+	default EPDIY_EPUB_4BPP if !LCD_USING_EPD_OPMO37A3
+	config EPDIY_EPUB_1BPP
+		bool "EPDIY_EPUB_1BPP"
+	config EPDIY_EPUB_4BPP
+		bool "EPDIY_EPUB_4BPP"    
+endchoice
+endif
+
+if !BSP_USING_BUILT_LCD || EPD_USE_LVGL
+#define the EPD connection type
+	config LCD_USING_EPD_SPI
+		bool
+		default n
+	config BSP_LCDC_USING_EPD_8BIT
+		def_bool n
+
+#define the EPD module name
+	config LCD_USING_OPM060D
+		bool
+		default n
+
+	config LCD_USING_OPM060D
+	    bool 
+		default n
+
+	config LCD_USING_EPD_OPM060DA_57
+		bool
+		default n
+
+	config LCD_USING_EPD_E0470A03_EPD_57
+		bool
+		default n
+
+#define the touch controller name
+	config TSC_USING_FT5446U_V01
+		bool
+		default n
+
+	config TSC_USING_FT6336U
+		bool
+		default n
+
+	config TSC_USING_GT967
+		bool
+		default n
+
+	choice
+		prompt "Custom LCD driver"
+		default LCD_USING_EPD_YZC085_V100 if BSP_USING_BOARD_SF32_OED_EPD_V11
+		default LCD_USING_EPD_YZC085_V100_V12 if BSP_USING_BOARD_SF32_OED_EPD_V12
+		default LCD_USING_EPD_YZC085_V100_V13 if BSP_USING_BOARD_SF32LB57_DPI_HDK_N16R8_EPD
+		default LCD_USING_EPD_YZC085_V100_V13 if BSP_USING_BOARD_DPI_HDK_LB57GYD7N6_EPD
+			
+		config LCD_USING_EPD_YZC085_V100_V12
+			bool "6.0 rect electronic paper display(EPD YZC085_V1.05 1032x758) for V1.2 board"
+			select TSC_USING_GT967 if BSP_USING_TOUCHD
+			select LCD_USING_OPM060D
+			select BSP_LCDC_USING_EPD_8BIT
+
+		config LCD_USING_EPD_YZC085_V100
+			bool "6.0 rect electronic paper display(EPD YZC085_V1.05 1032x758) for V1.1 board"
+			select TSC_USING_FT5446U_V01 if BSP_USING_TOUCHD
+			select LCD_USING_OPM060D
+			select BSP_LCDC_USING_EPD_8BIT
+
+		config LCD_USING_EPD_R7D005
+			bool "6.0 rect electronic paper display(EPD R7D005_-1.30 1448x1072)"
+			select TSC_USING_FT5446U_V01 if BSP_USING_TOUCHD
+			select LCD_USING_OPM060D
+			select BSP_LCDC_USING_EPD_8BIT
+
+		config LCD_USING_EPD_OPMO37A3
+			bool "3.7 rect electronic paper display  SPI (OPM037A3 240x416)"
+			select TSC_USING_FT6336U if BSP_USING_TOUCHD
+			select LCD_USING_EPD_SPI
+
+		config LCD_USING_EPD_YZC085_V100_V13
+			bool "6.0 rect electronic paper display(EPD YZC085_V1.05 1032x758) for SF32LB57 board"
+			select LCD_USING_EPD_OPM060DA_57
+			select TSC_USING_GT967 if BSP_USING_TOUCHD
+			select BSP_LCDC_USING_EPD_8BIT
+			select BSP_LCDC_USING_DIRECT_EPD
+
+		config LCD_USING_EPD_E0470A03_V10_57
+			bool "4.7 rect electronic paper display(EPD E0470A03 1216x684) for SF32LB57 board"
+			select LCD_USING_EPD_E0470A03_EPD_57
+			select BSP_LCDC_USING_EPD_8BIT
+			select BSP_LCDC_USING_DIRECT_EPD
+	endchoice
+
+
+	config EPD_WAVEFORM_USE_BIN
+    bool "OPM060D use binary waveform"
+    depends on LCD_USING_OPM060D || LCD_USING_EPD_OPM060DA_57 || LCD_USING_EPD_E0470A03_V10_57
+    default n
+
+
+    config LCD_HOR_RES_MAX
+        int
+        default 1448 if LCD_USING_EPD_R7D005
+		default 1032 if LCD_USING_EPD_YZC085_V100
+		default 758 if LCD_USING_EPD_YZC085_V100_V12 && EPD_USE_LVGL
+		default 758 if LCD_USING_EPD_YZC085_V100_V13 && EPD_USE_LVGL && BSP_USING_BOARD_SF32LB57_DPI_HDK_N16R8_EPD
+		default 758 if LCD_USING_EPD_YZC085_V100_V13 && EPD_USE_LVGL && BSP_USING_BOARD_DPI_HDK_LB57GYD7N6_EPD
+		default 1032 if LCD_USING_EPD_YZC085_V100_V12
+		default 684 if LCD_USING_EPD_E0470A03_V10_57
+		default 240 if LCD_USING_EPD_OPMO37A3
+    config LCD_VER_RES_MAX
+        int
+        default 1072 if LCD_USING_EPD_R7D005
+		default 758  if LCD_USING_EPD_YZC085_V100
+		default 1032 if LCD_USING_EPD_YZC085_V100_V12 && EPD_USE_LVGL
+		default 1032  if LCD_USING_EPD_YZC085_V100_V13 && EPD_USE_LVGL && BSP_USING_BOARD_SF32LB57_DPI_HDK_N16R8_EPD
+		default 1032 if LCD_USING_EPD_YZC085_V100_V13 && EPD_USE_LVGL && BSP_USING_BOARD_DPI_HDK_LB57GYD7N6_EPD
+		default 1216 if LCD_USING_EPD_E0470A03_V10_57
+		default 416  if LCD_USING_EPD_OPMO37A3
+    config LCD_DPI
+        int
+        default 315 if LCD_USING_EPD_R7D005
+		default 300 if LCD_USING_EPD_YZC085_V100
+		default 300 if LCD_USING_EPD_YZC085_V100_V12
+		default 300 if LCD_USING_EPD_YZC085_V100_V13
+		default 297 if LCD_USING_EPD_E0470A03_V10_57
+		default 130 if LCD_USING_EPD_OPMO37A3
+endif
