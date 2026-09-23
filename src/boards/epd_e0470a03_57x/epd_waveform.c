@@ -159,6 +159,7 @@ static const WaveTableEntry partial_wave_table =
 {0, 100, 12, &yzc085_wave_partial_0_100[0]};
 
 static const uint8_t *p_current_wave_from = NULL;
+static rt_bool_t s_skip_unchanged_pixels = RT_FALSE;
 #ifdef EPD_WAVEFORM_USE_BIN
     static uint8_t epd_waveform_bin_inited_ret = 0;
 #endif
@@ -216,6 +217,10 @@ uint32_t epd_wave_table_get_frames(int temperature, EpdDrawMode mode)
                               : WAVE_MODE_FULL;
         }
 
+        /* Full and initialization waveforms must retain their clearing pulses. */
+        s_skip_unchanged_pixels = (mode == EPD_DRAW_MODE_PARTIAL &&
+                                  wave_table_mode == WAVE_MODE_PARTIAL);
+
         // 手动温区覆盖：根据温区索引设置温度值
         int actual_temperature = temperature;
         if (manual_temp_zone >= 0 && manual_temp_zone < TEMP_ZONE_COUNT)
@@ -251,6 +256,7 @@ uint32_t epd_wave_table_get_frames(int temperature, EpdDrawMode mode)
         wave_table = &full_wave_table;
     }
     p_current_wave_from = (const uint8_t *)&wave_table->wave_table[0][0];
+    s_skip_unchanged_pixels = (wave_table == &partial_wave_table);
 
     return wave_table->frame_count;
 }
@@ -265,14 +271,23 @@ void epd_wave_table_fill_lut(uint32_t *p_argb8888_lut, uint32_t frame_num)
         // hardware reads bit[1:0]. Shift and set alpha to match non-BIN format.
         for (uint16_t i = 0; i < 256; i++)
             p_argb8888_lut[i] = (p_argb8888_lut[i] >> 3) | 0xFF000000;
-        return;
     }
+    else
 #endif
-    const uint8_t *p_frame_wave = p_current_wave_from + (frame_num * 256);
+    {
+        const uint8_t *p_frame_wave = p_current_wave_from + (frame_num * 256);
 
-    //Convert the 8-bit waveforms to 32-bit epic LUT values
-    for (uint16_t i = 0; i < 256; i++)
-        p_argb8888_lut[i] = 0xFF000000 | p_frame_wave[i];
+        //Convert the 8-bit waveforms to 32-bit epic LUT values
+        for (uint16_t i = 0; i < 256; i++)
+            p_argb8888_lut[i] = 0xFF000000 | p_frame_wave[i];
+    }
+
+    if (s_skip_unchanged_pixels)
+    {
+        /* Index = old gray << 4 | new gray. Keep alpha opaque and drive bits zero. */
+        for (uint16_t gray = 0; gray < 16; gray++)
+            p_argb8888_lut[(gray << 4) | gray] = 0xFF000000;
+    }
 }
 
 /* finsh 命令: staticwave <0|1>
