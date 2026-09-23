@@ -12,12 +12,11 @@ project/__pycache__/
 __pycache__/
 *.pyc
 
-# Host UI validation outputs
-tests/host/build/
-tests/host/*.ppm
+# Local host UI validation
+/tests/host/
 
 # IDE (local settings)
-.vscode/*.log
+/.vscode/
 
 # Runtime logs (device test logs, local only)
 log/
