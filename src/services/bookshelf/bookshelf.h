@@ -2,7 +2,7 @@
  * @file bookshelf.h
  * @brief 书库管理服务 —— 对外接口（UI 书架页调用）
  *
- * 职责：扫描书库目录（默认 `/book`）中的 TXT 书籍，
+ * 职责：扫描 TF 卡根目录（挂载点 `/`）中的 TXT 书籍，
  *       提供书籍列表快照（文件名 / 大小 / 阅读进度）。
  *
  * 数据流：bookshelf_refresh()（扫描，可用 msh 命令 `svc bookshelf list` 验证）
@@ -28,8 +28,8 @@ extern "C" {
 /** 书籍条目 */
 typedef struct
 {
-    char path[BOOKSHELF_PATH_MAX]; /**< 完整路径：/book/xxx.txt */
-    char name[BOOKSHELF_NAME_MAX]; /**< 文件名（含扩展名） */
+    char path[BOOKSHELF_PATH_MAX]; /**< 完整路径：/xxx.txt */
+    char name[BOOKSHELF_NAME_MAX]; /**< 书名（文件名去掉 .txt 后缀） */
     uint32_t size;                 /**< 文件大小（字节） */
     int progress;                  /**< 阅读进度 0~100（未读 = 0） */
 } bookshelf_item_t;
@@ -64,7 +64,7 @@ int bookshelf_list(bookshelf_item_t *items, int max_items);
 /** 获取指定序号书籍（0 起始）；成功返回 true */
 bool bookshelf_get(int index, bookshelf_item_t *out);
 
-/** 书库目录（默认 "/book"） */
+/** 书库目录（默认 "/"，即文件系统根目录 / TF 卡） */
 const char *bookshelf_dir(void);
 
 /* ==================== 事件 ==================== */

@@ -12,7 +12,7 @@
 | 屏幕 | E0470A03 4.7" 8bit EPD，1216×684（UI 竖屏 684×1216）|
 | 波形 | 打库二进制波形（`EPD_WAVEFORM_USE_BIN`，SDMODE=1 / VCOM=-2.10V）|
 | 输入 | KEY1/KEY2/KEY3 + GT967 触摸 |
-| 存储 | TF 卡（/book、/font、/pic、/incoming）+ 内置 fs_root |
+| 存储 | TF 卡（FAT32，书籍直接放根目录）+ 内置 fs_root |
 
 ## 依赖
 - SiFli-SDK v2.5+（已作为子模块 `SiFli-SDK/` 引入；也兼容用环境变量 `SIFLI_SDK` 指向任意 SDK 目录）
@@ -46,7 +46,7 @@ project\build_dpi-hdk_lb57gyd7n6_epd_hcpu\uart_download.bat
 │   ├── services/                  # 【数据服务层】提供数据接口给 UI
 │   │   ├── net/bt_pan.c|h         # 蓝牙 PAN 联网（手机热点共享）
 │   │   ├── weather/weather.c|h    # 天气数据（快照/状态/事件）
-│   │   ├── bookshelf/bookshelf.c|h# 书库管理（/book 扫描）
+│   │   ├── bookshelf/bookshelf.c|h  # 书库管理（卡根目录扫描）
 │   │   ├── reader/reader.c|h      # 阅读引擎（按偏移取文本/进度）
 │   │   └── service_cmd.c          # msh 调试命令（svc，验证各接口返回）
 │   └── boards/

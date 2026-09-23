@@ -449,7 +449,7 @@ static const svc_cmd_t pan_cmds[] =
 
 static const svc_cmd_t bookshelf_cmds[] =
 {
-    { "list",    "scan and list books in /book",     cmd_bs_list },
+    { "list",    "scan and list books in TF card root", cmd_bs_list },
 };
 
 static const svc_cmd_t reader_cmds[] =

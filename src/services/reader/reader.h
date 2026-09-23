@@ -6,8 +6,9 @@
  *       分页由 UI 侧基于 LVGL 文本度量实现（字号/行距变化可即时重算），
  *       本服务保证任意偏移读取的文字流一致（编码转换后输出 UTF-8）。
  *
- * 编码支持：当前为 UTF-8 直通（含 BOM 跳过，读取时保证不截断多字节字符）；
- *           GBK / BIG5 转换在后续迭代补充（需求：文本设置里的编码选项）。
+ * 编码支持：UTF-8（含 BOM 跳过）与 GBK（自动检测并转 UTF-8 输出，
+ *           复用固件内 FatFs 936 码表，零额外 Flash）；读取时保证不截断
+ *           多字节字符；BIG5 转换后续迭代补充（需求：文本设置里的编码选项）。
  *
  * 线程说明：接口线程安全，可在 UI 线程直接调用（文件 IO 已加锁）。
  */
@@ -28,8 +29,8 @@ typedef struct
 {
     char path[BOOKSHELF_PATH_MAX]; /**< 文件路径 */
     char title[BOOKSHELF_NAME_MAX]; /**< 文件名 */
-    uint32_t file_size;            /**< 文本总字节数（UTF-8，不含 BOM） */
-    char encoding[16];             /**< 检测到的编码："UTF-8"（"GBK" TODO） */
+    uint32_t file_size;            /**< 文件总字节数 */
+    char encoding[16];             /**< 检测到的编码："UTF-8" / "GBK" */
     uint32_t position;             /**< 当前读取位置（字节偏移） */
 } reader_info_t;
 
@@ -59,7 +60,9 @@ bool reader_get_info(reader_info_t *out);
  * @param buf_size     缓冲大小（实际最多读 buf_size-1 字节）
  * @param next_offset  输出：下一次应读取的偏移（保证落在完整字符边界）
  * @return 读取的字节数（>=0）；负值为错误
- * @note 尾部若为不完整多字节字符，会被截掉（下次从该字符开始读）
+ * @note 输出恒为 UTF-8（GBK 源文件自动转码）；尾部若为不完整多字节字符，
+ *       会被截掉（下次从该字符开始读）；返回的字节数与 next_offset
+ *       前进量可能不等（转码膨胀/收缩所致）
  */
 int reader_read_text(uint32_t offset, char *buf, rt_size_t buf_size, uint32_t *next_offset);
 

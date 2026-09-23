@@ -5,7 +5,7 @@
  */
 /**
  * @file bookshelf.c
- * @brief 书库管理服务实现：扫描书库目录中的 TXT 书籍
+ * @brief 书库管理服务实现：扫描 TF 卡根目录中的 TXT 书籍
  */
 #include "bookshelf.h"
 
@@ -17,7 +17,9 @@
 #define DBG_LVL DBG_INFO
 #include <rtdbg.h>
 
-#define BOOKSHELF_DIR_DEFAULT "/book"
+/* 书籍扫描目录：TF 卡挂载点（根目录）。
+   约定以 '/' 结尾，便于直接与文件名拼接："/" + "书名.txt" */
+#define BOOKSHELF_DIR_DEFAULT "/"
 
 static const char *g_dir = BOOKSHELF_DIR_DEFAULT;
 static bookshelf_item_t g_items[BOOKSHELF_MAX_ITEMS];
@@ -69,6 +71,7 @@ int bookshelf_refresh(void)
     DIR *dir;
     struct dirent *ent;
     int count = 0;
+    int i;
 
     if (!g_inited)
         return -RT_ERROR;
@@ -83,23 +86,45 @@ int bookshelf_refresh(void)
             bookshelf_item_t *it;
             struct stat st;
             char full[BOOKSHELF_PATH_MAX];
+            size_t nlen;
 
-            if (!path_is_txt(ent->d_name))
+            /* 过滤：隐藏文件 / 非 .txt（目录由下面的 stat 结果排除） */
+            if (ent->d_name[0] == '.' || !path_is_txt(ent->d_name))
                 continue;
 
-            rt_snprintf(full, sizeof(full), "%s/%s", g_dir, ent->d_name);
+            rt_snprintf(full, sizeof(full), "%s%s", g_dir, ent->d_name);
             if (stat(full, &st) != 0 || !S_ISREG(st.st_mode))
                 continue;
 
             it = &g_items[count];
             memset(it, 0, sizeof(*it));
             rt_snprintf(it->path, sizeof(it->path), "%s", full);
-            rt_snprintf(it->name, sizeof(it->name), "%s", ent->d_name);
+            /* 书名 = 文件名去掉 ".txt" 后缀（对齐初版显示纯书名） */
+            nlen = strlen(ent->d_name) - 4;
+            if (nlen >= sizeof(it->name))
+                nlen = sizeof(it->name) - 1;
+            memcpy(it->name, ent->d_name, nlen);
+            it->name[nlen] = '\0';
             it->size = (uint32_t)st.st_size;
             it->progress = 0; /* TODO: 阅读进度持久化后回填 */
             count++;
         }
         closedir(dir);
+
+        /* 按书名排序：列表很短（≤32），直接插入排序；
+           对齐初版 EpubList 按 title 排序的行为 */
+        for (i = 1; i < count; i++)
+        {
+            bookshelf_item_t tmp = g_items[i];
+            int j = i - 1;
+
+            while (j >= 0 && strcmp(g_items[j].name, tmp.name) > 0)
+            {
+                g_items[j + 1] = g_items[j];
+                j--;
+            }
+            g_items[j + 1] = tmp;
+        }
     }
     else
     {

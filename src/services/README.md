@@ -9,8 +9,8 @@
 |---|---|---|
 | 蓝牙 PAN 联网 | `services/net/bt_pan.h` | 手机蓝牙配对/连接、PAN 网络共享（互联网出口） |
 | 天气数据 | `services/weather/weather.h` | 经由 PAN 网络拉取并解析天气，提供「快照 + 状态 + 事件」 |
-| 书库管理 | `services/bookshelf/bookshelf.h` | 扫描 /book 目录 TXT 书籍列表（书名/大小/阅读进度） |
-| 阅读引擎 | `services/reader/reader.h` | 打开书籍、按“字节偏移”取 UTF-8 文本流、读写阅读位置 |
+| 书库管理 | `services/bookshelf/bookshelf.h` | 扫描 TF 卡根目录 TXT 书籍列表（书名/大小/阅读进度） |
+| 阅读引擎 | `services/reader/reader.h` | 打开书籍（自动识别 UTF-8/GBK 并统一转 UTF-8 输出）、按“字节偏移”取文本、读写阅读位置 |
 
 ## 数据流
 
@@ -135,6 +135,9 @@ reader_set_position(offset);        /* 记录进度 */
   在手机侧开启“蓝牙网络共享 / 个人热点（蓝牙）”。
 - 设备侧自动流程：配对/加密完成 → 3 秒后自动发起 PAN 连接；
   天气请求时会再次确保网络（未连时自动请求连接并等待）。
+- 书库：把 `.txt` 书籍放在 **TF 卡根目录**（卡需 FAT32 格式；只扫描根目录一层，
+  不含子文件夹），`ls` 能看到的 `.txt` 即会被 `svc bookshelf list` 列出；
+  列表按书名排序，`item.name` 为去掉 `.txt` 后缀的书名。
 - 串口调试命令（msh）：
 
 ```
@@ -156,5 +159,5 @@ svc reader seek <offset>     # 设置阅读位置
 - [ ] 天气缓存持久化（重启后仍可显示上次数据）
 - [ ] 空气质量（AQI）/ 日出日落等数据源扩展
 - [ ] 城市选择的持久化（FlashDB）
-- [ ] reader：GBK / BIG5 编码检测与转换（当前仅 UTF-8 直通）
+- [ ] reader：BIG5 编码转换（GBK 已支持自动检测并转 UTF-8）
 - [ ] bookshelf / reader：阅读进度持久化（当前为内存状态）
