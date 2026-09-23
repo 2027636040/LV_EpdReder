@@ -8,132 +8,104 @@
 | 模块 | 头文件 | 职责 |
 |---|---|---|
 | 蓝牙 PAN 联网 | `services/net/bt_pan.h` | 手机蓝牙配对/连接、PAN 网络共享（互联网出口） |
-| 天气数据 | `services/weather/weather.h` | 经由 PAN 网络拉取并解析天气，提供「快照 + 状态 + 事件」 |
+| 天气数据 | `services/weather/weather.h` | PAN 直连和风、定时更新、任务结果、互斥快照及 NOR 持久化 |
 | 书库管理 | `services/bookshelf/bookshelf.h` | 扫描 TF 卡根目录 TXT 书籍列表（书名/大小/阅读进度） |
 | 阅读引擎 | `services/reader/reader.h` | 打开书籍（自动识别 UTF-8/GBK 并统一转 UTF-8 输出）、按“字节偏移”取文本、读写阅读位置 |
 
-## 数据流
+## PAN 联网校时
 
-```mermaid
-flowchart LR
-  UI[UI 天气页] -- weather_request_refresh --> W[weather 服务]
-  W -- 自动确保网络 --> P[bt_pan 服务]
-  P -- 蓝牙配对 / PAN 联网 --> phone[手机热点 NAP]
-  W -- HTTPS --> api[和风天气 WebAPI v7]
-  W -- 事件回调 + weather_get_info --> UI
-```
+每次 PAN 连接后，独立的 pan_time 线程等待蓝牙网卡取得 IP 和网关，再通过
+NETUTILS_NTP_HOSTNAME 指定的服务器校时（默认 ntp.aliyun.com）。成功后一次性写入 RTC，
+系统 time() 和界面状态栏随之使用新时间；当前时区为北京时间（UTC+8）。
+同一次连接成功后不重复校时，断开并重新联网后再次同步。
 
-## 线程约定（重要）
+NTP 响应等待上限为 5 秒，失败间隔 30 秒重试，每次连接最多请求 3 次。
+断线后放弃旧连接的结果，失败时保留原 RTC 时间。校时仅输出 pan.time 串口日志，
+不弹窗、不直接操作 LVGL，也不阻塞蓝牙回调或天气线程。
 
-- 所有对外接口**线程安全**，可在 UI 线程直接调用；
-- 所有**事件回调运行在服务线程**：回调里只允许置标志 / `lv_async_call()`，
-  严禁直接操作 LVGL；
-- 天气刷新是**异步**的：`weather_request_refresh()` 立即返回，
-  进度通过状态（回调或轮询）表达。
+## 天气数据与线程
 
-## 天气状态机
+设备通过手机蓝牙 PAN 直接连接和风 HTTPS 服务，不经过上位机。PAN Profile 连接后，
+天气线程还会在 lwIP 线程中检查蓝牙网卡的 Link、IP 和网关；网络未就绪时等待最多 15 秒。
+DNS 使用 lwIP 的线程安全解析接口。TLS 连接、握手及响应读取采用非阻塞套接字和 30 秒截止时间，
+保留 SDK 的 CA 链及域名校验；不跟随重定向，不在 URL 或日志中输出 API Key。
+TLS 的证书有效期检查仍取决于 SDK 的 MBEDTLS_HAVE_TIME_DATE 配置。
 
-```
-IDLE ──request──► REFRESHING ──成功──► UPDATED
-                     │
-                     ├─失败(有旧数据)──► CACHED （继续显示缓存，状态提示原因）
-                     └─失败(无旧数据)──► FAILED
-```
+单个 weather 线程顺序执行网络请求、城市校验、TF 配置导入和 NOR 写入。
+UI 使用 weather_get_info() 复制由互斥锁保护的完整快照；锁内不执行网络或 Flash 操作。
+发布数据时增加 revision，ui_weather_data.c 在 UI 线程转换显示文字，只有值发生变化的控件才重绘。
+后台更新不修改前台任务的 ticket 或结果，因此不会错误地关闭用户正在等待的弹窗。
 
-| 状态 | UI 建议动作 |
-|---|---|
-| `WEATHER_STATE_REFRESHING` | 显示“更新中”，按钮置灰 |
-| `WEATHER_STATE_UPDATED` | 用 `weather_get_info()` 数据刷新页面，提示“已更新” |
-| `WEATHER_STATE_CACHED` | 用 `weather_get_info()` 数据刷新页面（是缓存数据），提示 `info.status`（如“蓝牙未连接”） |
-| `WEATHER_STATE_FAILED` | 显示 `info.status` 与重试按钮 |
-
-### 天气快照字段 → 页面元素对照（UI 原型稿 v2.0）
-
-| 页面元素 | 字段 |
-|---|---|
-| 📍 城市 / 更新时间 | `info.city` / `info.update_time`（格式 "17:05"）|
-| 主图标（⛅） | `info.code`（和风天气图标代码，UI 侧映射图标资源；`info.text` 描述文字可直接显示）|
-| 大温度 / 体感 / 今日 H·L | `info.temperature` / `info.feels_like` / `info.high` / `info.low` |
-| 风：东南风3级 | `info.wind_dir` + `info.wind_scale` |
-| 信息卡 8 项 | `info.humidity`（湿度 %）/ `wind_speed`（风速 km/h）/ `visibility`（能见度 km）/ `cloud`（云量 %）/ `sunrise` / `sunset` / `pressure`（hPa）/ `aqi` + `aqi_category` |
-| 未来三天预报 | `info.forecast[0..forecast_count-1]`：`date`（"09-24"，UI 可转“明天/后天/周X”）、`text`、`code`、`high`、`low`、`wind_dir`、`wind_scale` |
-| “数据来源：本地缓存” | `state == WEATHER_STATE_CACHED`（`UPDATED` = 本次网络数据；`info.status` 为失败原因文本，可直接显示）|
-
-> 城市选择表与原型稿一致：北京/上海/南京/深圳/杭州/成都/广州/西安；`weather_set_city("101190101")`（和风 LocationID，见城市表 `id` 字段）下次刷新生效。
-
-### 天气图标绑定：用 `code` 字段
-
-`info.code`（实况）与 `info.forecast[i].code`（预报）是**同一套「和风天气图标代码」**，
-UI 侧只需做一张 `code → 图标资源` 映射表；官方开源图标库（SVG / 图标字体）：
-
-- 图标站点：<https://icons.qweather.com/>（含代码表；GitHub：`qwd/Icons`）
-
-```
-100 晴  101 多云  102 少云  103 晴间多云  104 阴
-150~153 夜间版（晴/多云/少云/晴间多云）
-300 阵雨  301 强阵雨  302 雷阵雨  303 强雷阵雨  304 雷阵雨伴冰雹
-305 小雨  306 中雨  307 大雨  308 极端降雨  309 毛毛雨  310 暴雨
-311 大暴雨  312 特大暴雨  313 冻雨  314 小到中雨  315 中到大雨
-316 大到暴雨  317/318 暴雨到大暴雨  399 雨
-400 小雪  401 中雪  402 大雪  403 暴雪  404 雨夹雪  405 雨雪
-406 阵雨夹雪  407 阵雪  408 小到中雪  409 中到大雪  410 大到暴雪  499 雪
-500 薄雾  501 雾  502 霾  503 扬沙  504 浮尘  507 沙尘暴  508 强沙尘暴
-509 浓雾  510 强浓雾  511 中度霾  512 重度霾  513 严重霾  514 大雾  515 特强浓雾
-900 热  901 冷  999 未知
-```
-
-> 数据源说明（和风天气 WebAPI v7）：
-> - `WEATHER_API_HOST` / `WEATHER_KEY` 在 `weather.c` 顶部配置（控制台-设置 / 控制台-项目-凭据），**仅支持 HTTPS**；
-> - **根证书**：仅携带 `ISRG Root X1`（和风站点为 Let's Encrypt 证书链），位于 `src/services/weather/certs/`，
->   经 `proj.conf` 的 `CONFIG_PKG_USING_MBEDTLS_EXTRA_CERT_DIRS` 引入；换域名时往该目录补 PEM 即可；
-> - **内存**：`project/dpi-hdk_lb57gyd7n6_epd_hcpu/ptab.json` 已将空闲的 ACPU RAM 并入 HCPU（RT 堆 ≈138KB→≈201KB；本工程未启用 ACPU，将来若启用 ACPU 需撤回该改动）；
-> - **响应压缩**：和风服务端强制 gzip（`Accept-Encoding` 协商无效），设备侧用内置 miniz（`src/thirdparty/miniz`）解压后再解析；
-> - 按量计费**每月前 5 万次请求免费**（实况 + 预报价内）；
-> - 预报默认用 `7d` 拿满“未来三天”；若账号权限不足（401/403），把 `WEATHER_DAILY_DAYS` 改成 `"3d"`；
-> - 空气质量（AQI）需单独的 air 接口，暂未接入（`info.aqi = -1`，UI 显示 "--"）。
-
-## 使用示例（LVGL 页面伪码）
-
-### 1. 天气页（进入自动更新）
+### 请求与结果
 
 ```c
-#include "weather.h"
+uint32_t ticket;
+weather_request_job(WEATHER_JOB_SYNC, NULL, &ticket);
+/* WEATHER_JOB_IMPORT: 手动导入 TF 配置；WEATHER_JOB_CITY: 传数字城市 ID。 */
 
-static void weather_page_refresh_async(void *unused)
-{
-    weather_info_t info;
-    weather_get_info(&info);            /* 无论有无数据，info.status 均可显示 */
-
-    /* 用 info.city / info.temperature / info.forecast[] ... 刷新页面控件 */
-    lv_label_set_text_fmt(temp_label, "%d℃", info.temperature);
+weather_result_t result;
+weather_get_result(&result);
+if (result.ticket == ticket && !result.busy) {
+    /* result.success / result.message；只能在 UI 线程操作 LVGL。 */
 }
 
-static void on_weather_event(weather_state_t state)
-{
-    /* 服务线程上下文：切回 UI 线程处理 */
-    lv_async_call(weather_page_refresh_async, NULL);
-}
+weather_info_t snapshot;
+weather_get_info(&snapshot); /* 返回值及 snapshot.valid 表示是否有缓存。 */
+```
 
-void weather_page_create(void)
+每次只受理一个前台任务。后台请求串行执行，不弹窗；前台请求排队时不覆盖正在使用的配置。
+开机先恢复本地缓存，配置和城市有效且连接手机后同步一次，之后以 30 分钟为固定周期。
+导入配置或成功设置城市后额外尝试一次静默同步。失败时保留上一次完整快照。
+进入或离开天气页不会触发额外 HTTP 请求。
+
+手动同步显示“正在同步”，失败显示“同步失败，请重试”，成功显示“同步成功”。
+成功消息完成墨水屏刷新后保留一秒再关闭。等待弹窗无动画，数字输入无闪烁光标，
+后台请求不触发全屏重建。
+
+### 接口与字段
+
+| 请求 | 页面内容 |
+|---|---|
+| /geo/v2/city/lookup?location=ID | 精确核对返回 ID，获得城市名、区域和经纬度 |
+| /v7/weather/now?location=ID | 当前温度、体感、天气代码、风向风级、湿度、风速、能见度、气压、云量 |
+| /v7/weather/7d?location=ID | 今日高低温、日出日落，以及跳过今天后的三天预报 |
+| /airquality/v1/current/纬度/经度 | 中国 cn-mee AQI 及返回的等级文字 |
+
+使用专属 API Host 和 X-QW-Api-Key 请求头，lang=zh。HTTP/JSON 错误不会发布为有效天气。
+实况和三天预报以及本地保存均成功才报告同步成功；空气质量为可选数据，失败时显示 --，
+不会把其他国家的指数或 QAQI 当作中国 AQI。缺失数值用 WEATHER_MISSING，AQI 缺失用 -1，
+风级区间保留原始字符串，预报日期使用接口返回日期，不写死星期。
+响应体及 gzip 解压各限制为 32 KiB，gzip 校验长度与 CRC；解压器放在堆上，避免占用大块线程栈。
+网络失败或服务器 5xx 最多再试一次，4xx 不盲目重试。账户需具备相应接口权限。
+
+实况和预报采用城市天气 v7 数据模型，字段遵循下方链接的 v7 文档。官方已标注 v7 即将弃用。
+
+### TF 配置与持久化
+
+TF 卡根目录放置 UTF-8 的 qweather.json，固定两个字符串字段：
+
+```json
 {
-    weather_set_event_cb(on_weather_event);
-    weather_request_refresh();          /* 进入页面自动更新 */
+  "api_key": "YOUR_API_KEY",
+  "api_host": "YOUR_API_HOST.qweatherapi.com"
 }
 ```
 
-### 2. 城市选择页
+设置 → 天气设置 → 从 TF 卡导入天气配置。只读取真实 SD 设备的挂载点，不把 NOR 同名文件
+当成 TF 配置；SD 尚未挂载时尝试挂到 /sdcard，不自动格式化存储设备。
+导入不立即验证密钥，城市校验或天气同步时由服务器验证。保存失败不替换现有配置。
 
-```c
-#include "weather.h"
+城市设置先显示 LVGL 二维码，地址为和风官方城市列表页；点击“我已获取城市ID”后进入数字键盘。
+输入 ID 必须与 GeoAPI 返回的 ID 一致，网络校验和保存成功才改变城市，并清除其他城市的缓存。
+配置和天气一同保存到 weather_store 独立 NOR 区域（0x121B0000，64 KiB），
+采用 16 个 4 KiB 槽轮换、版本/序号/CRC 校验，最后写提交标记。重启选择最新有效槽。
+该区域不属于 TF 文件系统，移除 TF 卡仍可使用已导入的配置和缓存。
 
-const weather_city_t *cities;
-int count = 0;
-cities = weather_get_city_list(&count);     /* 预设城市表 */
-
-/* 用户点“确认”时： */
-weather_set_city("101010100");              /* 和风 LocationID，见城市表 cities[i].id */
-weather_request_refresh();
-```
+参考：[请求配置](https://dev.qweather.com/docs/configuration/api-config/)、
+[城市查询](https://dev.qweather.com/docs/api/geoapi/city-lookup/)、
+[城市实况](https://dev.qweather.com/docs/api/weather/weather-now-webapi-v7/)、
+[城市预报](https://dev.qweather.com/docs/api/weather/weather-daily-forecast-webapi-v7/)、
+[空气质量](https://dev.qweather.com/docs/api/air-quality/air-current/)。
 
 ### 3. 设置页“蓝牙”开关 / 状态栏图标
 
@@ -188,7 +160,7 @@ reader_set_position(offset);        /* 记录进度 */
 ```
 svc                          # 列出所有服务与子命令
 svc weather status           # 打印天气快照（全部字段）
-svc weather refresh          # 请求刷新并等待结果后打印
+svc weather refresh          # 异步请求刷新，用 status 查看完成情况
 svc weather city [id]        # 查看/设置城市
 svc pan status|on|off|connect
 svc bookshelf list           # 扫描并打印书库
@@ -201,9 +173,8 @@ svc reader seek <offset>     # 设置阅读位置
 
 ## 待办（后续迭代）
 
-- [ ] 天气缓存持久化（重启后仍可显示上次数据）
-- [ ] 空气质量（AQI，需和风 air 接口单独请求）
-- [ ] 城市选择的持久化（FlashDB）
+- [x] 天气缓存、TF 导入的配置和校验后的城市持久化到独立 NOR 区域
+- [x] 空气质量（cn-mee AQI；不可用时显示 --）
 - [ ] reader：BIG5 编码转换（GBK 已支持自动检测并转 UTF-8）
 - [x] 阅读 UI：通过 `ui_bookshelf_data.c` 在 `/.epd_reader/` 保存原文件偏移、页码和进度；
   `reader_set_position()` 本身只更新服务内存位置。

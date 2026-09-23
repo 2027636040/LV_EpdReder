@@ -1,49 +1,80 @@
 #include "ui_weather_data.h"
+#include "weather.h"
+#include <stdio.h>
+#include <string.h>
 
-static const ui_weather_city_t cities[UI_WEATHER_CITY_COUNT] = {
-    {
-        "北京", "中国北京", 100, 28, 30, 32, 20, "晴", "北风2级",
-        {"45%", "8km/h", "15km", "10%", "06:05", "18:42", "1015hPa", "良 AQI78"},
-        {{100, "晴", "22~34℃", ""}, {101, "多云", "21~30℃", ""}, {100, "晴", "24~35℃", ""}}
-    },
-    {
-        "上海", "中国上海", 305, 25, 27, 28, 22, "小雨", "东风4级",
-        {"82%", "18km/h", "5km", "75%", "05:58", "18:28", "1010hPa", "优 AQI42"},
-        {{306, "中雨", "20~25℃", ""}, {300, "阵雨", "21~27℃", ""}, {101, "多云", "23~30℃", ""}}
-    },
-    {
-        "南京", "中国江苏", 101, 26, 28, 30, 22, "多云", "东南风3级",
-        {"68%", "12km/h", "8km", "55%", "06:12", "18:35", "1013hPa", "良 AQI62"},
-        {{101, "多云", "23~31℃", "东南风2级"}, {100, "晴", "25~33℃", "微风"}, {305, "小雨", "20~27℃", "东北风3级"}}
-    },
-    {
-        "深圳", "中国广东", 302, 30, 34, 33, 26, "雷阵雨", "南风3级",
-        {"88%", "15km/h", "4km", "80%", "06:10", "18:30", "1008hPa", "良 AQI65"},
-        {{302, "雷阵雨", "25~31℃", ""}, {306, "中雨", "24~29℃", ""}, {103, "多云转晴", "26~33℃", ""}}
-    },
-    {
-        "杭州", "中国浙江", 103, 27, 29, 31, 23, "多云转晴", "东南风2级",
-        {"72%", "10km/h", "10km", "40%", "05:56", "18:25", "1012hPa", "优 AQI38"},
-        {{100, "晴", "24~32℃", ""}, {101, "多云", "23~30℃", ""}, {103, "晴转多云", "25~33℃", ""}}
-    },
-    {
-        "成都", "中国四川", 104, 22, 23, 25, 18, "阴天", "微风",
-        {"78%", "5km/h", "6km", "90%", "06:28", "18:50", "998hPa", "良 AQI85"},
-        {{305, "小雨", "17~23℃", ""}, {104, "阴", "18~24℃", ""}, {104, "多云转阴", "19~26℃", ""}}
-    },
-    {
-        "广州", "中国广东", 306, 29, 33, 32, 25, "中雨", "南风4级",
-        {"85%", "20km/h", "3km", "85%", "06:08", "18:32", "1006hPa", "良 AQI72"},
-        {{307, "大雨", "24~28℃", ""}, {302, "雷阵雨", "23~30℃", ""}, {101, "多云", "26~33℃", ""}}
-    },
-    {
-        "西安", "中国陕西", 103, 24, 25, 29, 16, "晴间多云", "西北风2级",
-        {"50%", "7km/h", "12km", "30%", "06:20", "18:38", "1016hPa", "良 AQI92"},
-        {{100, "晴", "18~30℃", ""}, {100, "晴", "17~31℃", ""}, {101, "多云", "19~28℃", ""}}
-    }
-};
+static ui_weather_view_t view;
 
-const ui_weather_city_t *ui_weather_city(unsigned index)
+static void value_text(char *buffer, size_t size, int value, const char *unit)
 {
-    return &cities[index < UI_WEATHER_CITY_COUNT ? index : 2];
+    if (value == WEATHER_MISSING) snprintf(buffer, size, "--");
+    else snprintf(buffer, size, "%d%s", value, unit);
+}
+
+bool ui_weather_process(void)
+{
+    weather_info_t data;
+    weather_get_info(&data);
+    if (view.revision && data.revision == view.revision) return false;
+    memset(&view, 0, sizeof(view));
+    view.revision = data.revision;
+    view.code = data.valid ? data.code : 999;
+    snprintf(view.city, sizeof(view.city), "%s", data.city[0] ? data.city : "天气");
+    snprintf(view.temperature, sizeof(view.temperature), "--℃");
+    snprintf(view.description, sizeof(view.description), "暂无天气数据");
+    snprintf(view.range_wind, sizeof(view.range_wind), "H:--℃   L:--℃   风：--");
+    snprintf(view.update_time, sizeof(view.update_time), "更新: --");
+    snprintf(view.summary, sizeof(view.summary), "暂无天气数据");
+    snprintf(view.source, sizeof(view.source), "数据来源：和风天气");
+    for (unsigned i = 0; i < UI_WEATHER_METRIC_COUNT; ++i)
+        snprintf(view.metrics[i], sizeof(view.metrics[i]), "--");
+    for (unsigned i = 0; i < UI_WEATHER_FORECAST_COUNT; ++i)
+    {
+        ui_weather_forecast_t *f = &view.forecast[i];
+        f->code = 999;
+        snprintf(f->date, sizeof(f->date), "--");
+        snprintf(f->text, sizeof(f->text), "--");
+        snprintf(f->temperature_range, sizeof(f->temperature_range), "--");
+        snprintf(f->wind, sizeof(f->wind), "--");
+    }
+    if (!data.valid) return true;
+    char feels[24], high[24], low[24];
+    value_text(view.temperature, sizeof(view.temperature), data.temperature, "℃");
+    value_text(feels, sizeof(feels), data.feels_like, "℃");
+    value_text(high, sizeof(high), data.high, "℃");
+    value_text(low, sizeof(low), data.low, "℃");
+    snprintf(view.description, sizeof(view.description), "%s | 体感 %s", data.text, feels);
+    snprintf(view.range_wind, sizeof(view.range_wind), "H:%s   L:%s   %s %s级", high, low,
+             data.wind_dir[0] ? data.wind_dir : "风", data.wind_scale_text[0] ? data.wind_scale_text : "--");
+    const char *time = strchr(data.update_time, 'T');
+    if (time && strlen(time + 1) >= 5)
+        snprintf(view.update_time, sizeof(view.update_time), "更新: %.5s", time + 1);
+    snprintf(view.summary, sizeof(view.summary), "%s %s %s", data.city, data.text, view.temperature);
+    snprintf(view.source, sizeof(view.source), "和风天气 | %s", data.region);
+    value_text(view.metrics[0], sizeof(view.metrics[0]), data.humidity, "%");
+    value_text(view.metrics[1], sizeof(view.metrics[1]), data.wind_speed, " km/h");
+    value_text(view.metrics[2], sizeof(view.metrics[2]), data.visibility, " km");
+    value_text(view.metrics[3], sizeof(view.metrics[3]), data.cloud, "%");
+    snprintf(view.metrics[4], sizeof(view.metrics[4]), "%s", data.sunrise[0] ? data.sunrise : "--");
+    snprintf(view.metrics[5], sizeof(view.metrics[5]), "%s", data.sunset[0] ? data.sunset : "--");
+    value_text(view.metrics[6], sizeof(view.metrics[6]), data.pressure, " hPa");
+    if (data.aqi >= 0)
+        snprintf(view.metrics[7], sizeof(view.metrics[7]), "%d %s", data.aqi, data.aqi_category);
+    for (unsigned i = 0; i < (unsigned)data.forecast_count && i < UI_WEATHER_FORECAST_COUNT; ++i)
+    {
+        const weather_forecast_t *src = &data.forecast[i];
+        ui_weather_forecast_t *dst = &view.forecast[i];
+        dst->code = src->code;
+        snprintf(dst->date, sizeof(dst->date), "%s", strlen(src->date) == 10 ? src->date + 5 : src->date);
+        snprintf(dst->text, sizeof(dst->text), "%s", src->text);
+        snprintf(dst->temperature_range, sizeof(dst->temperature_range), "%d℃~%d℃", src->low, src->high);
+        snprintf(dst->wind, sizeof(dst->wind), "%s %s级", src->wind_dir,
+                 src->wind_scale_text[0] ? src->wind_scale_text : "--");
+    }
+    return true;
+}
+
+const ui_weather_view_t *ui_weather_view(void)
+{
+    return &view;
 }

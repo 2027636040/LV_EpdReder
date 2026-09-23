@@ -19,6 +19,7 @@ extern const lv_image_dsc_t ui_icon_battery_charge;
 extern const lv_image_dsc_t ui_icon_key1;
 extern const lv_image_dsc_t ui_icon_key2;
 extern const lv_image_dsc_t ui_icon_key3;
+extern const lv_image_dsc_t ui_icon_back;
 extern const lv_image_dsc_t ui_icon_location;
 extern const lv_image_dsc_t ui_icon_humidity;
 extern const lv_image_dsc_t ui_icon_wind;

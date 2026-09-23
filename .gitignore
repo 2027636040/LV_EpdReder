@@ -20,3 +20,6 @@ __pycache__/
 
 # Runtime logs (device test logs, local only)
 log/
+
+# TF weather credentials (the example template remains tracked)
+qweather.json

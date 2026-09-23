@@ -3,6 +3,8 @@
 #include "icons/ui_icons.h"
 #include "icons/weather_icons.h"
 #include "ui_weather_data.h"
+#include "weather.h"
+#include "bf0_hal.h"
 #include "ui_bookshelf_data.h"
 #include "ui_settings.h"
 #include "ui_reader.h"
@@ -15,13 +17,20 @@
 #define HEIGHT 1216
 #define MARGIN 32
 #define CONTENT_WIDTH (WIDTH - 2 * MARGIN)
-#define FOCUS_CAPACITY 12
+#define PAGE_TITLE_X (MARGIN + 72)
+#define PAGE_TITLE_Y 103
+#define PAGE_CONTENT_Y 174
+#define ICON_BUTTON_SIZE 56
+#define BACK_BUTTON_Y 94
+#define FOCUS_CAPACITY 24
 #define NAV_BACK (-2)
 #define NAV_IDLE (-1)
-#define WEATHER_REFRESH (-3)
 #define CITY_CONFIRM (-4)
 #define POPUP_CLOSE (-5)
-#define CITY_SELECT_BASE (-64)
+#define WEATHER_SYNC (-9)
+#define WEATHER_IMPORT (-10)
+#define CITY_ERASE (-11)
+#define CITY_DIGIT_BASE (-40)
 #define BOOKSHELF_PREVIOUS (-6)
 #define BOOKSHELF_NEXT (-7)
 #define BOOK_OPEN_BASE (-128)
@@ -64,14 +73,22 @@ static status_view_t view;
 static launcher_status_t status;
 static bool initialized;
 static lv_style_t epd_style;
-static unsigned weather_city_index = 2;
-static unsigned city_selection;
-static char weather_update_time[6] = "17:05";
-static lv_obj_t *weather_time_label;
-static lv_obj_t *city_title;
-static lv_obj_t *city_buttons[UI_WEATHER_CITY_COUNT];
-static lv_obj_t *city_markers[UI_WEATHER_CITY_COUNT];
+static struct
+{
+    lv_obj_t *city, *time, *icon, *temperature, *description, *range, *source;
+    lv_obj_t *metrics[UI_WEATHER_METRIC_COUNT];
+    lv_obj_t *date[3], *forecast_icon[3], *text[3], *temperatures[3], *wind[3];
+    uint32_t revision;
+    int code, forecast_code[3];
+} weather_widgets;
+static lv_obj_t *city_input, *weather_config_label;
+static char city_digits[WEATHER_CITY_ID_MAX];
+static uint32_t weather_ticket;
+static weather_job_t weather_job;
+static unsigned weather_popup_phase;
+static uint32_t weather_popup_tick, weather_poll_tick;
 static lv_obj_t *popup;
+static lv_obj_t *popup_text, *popup_button;
 static lv_obj_t *popup_previous_focus;
 static unsigned bookshelf_first;
 static setting_view_t setting_views[UI_SETTING_COUNT];
@@ -79,6 +96,7 @@ static lv_obj_t *reader_body, *reader_footer, *reader_progress, *reader_panel;
 static lv_obj_t *reader_option_label, *reader_jump_label;
 static uint32_t reader_revision;
 static unsigned reader_jump, reader_option;
+static unsigned reader_panel_focus_start;
 static bool reader_session, reader_settings_dirty, reader_return_panel;
 static bool reader_confirm_pending;
 static bool reader_touch = true;
@@ -87,7 +105,7 @@ static void reader_panel_open(void);
 
 static const char *const titles[UI_PAGE_COUNT] = {
     "SiFli EPD DEMO", "书架", "天气", "文件传输", "相册", "Wi-Fi 配网",
-    "设置", "阅读", "文本设置", "城市选择", "关于设备", "锁屏"
+    "设置", "阅读", "文本设置", "天气城市ID", "关于设备", "锁屏", "天气设置", "天气城市ID"
 };
 
 static void epd_obj_init(lv_obj_t *obj)
@@ -156,12 +174,13 @@ unsigned launcher_focus_index(void)
 
 static void clicked(lv_event_t *event)
 {
-    if (pending_page != NAV_IDLE) return;
+    if (pending_page != NAV_IDLE || weather_popup_phase) return;
+    int target = (int)(intptr_t)lv_event_get_user_data(event);
     if (launcher_current_page() == UI_PAGE_READER &&
-        (!lv_refreshing_done() || reader_confirm_pending)) return;
+        (!lv_refreshing_done() || (reader_confirm_pending && target != NAV_BACK))) return;
     lv_obj_t *button = lv_event_get_target_obj(event);
     lv_group_focus_obj(button);
-    pending_page = (int)(intptr_t)lv_event_get_user_data(event);
+    pending_page = target;
 }
 
 static lv_obj_t *button_create(lv_obj_t *parent, int x, int y, int width, int height,
@@ -187,6 +206,23 @@ static lv_obj_t *button_create(lv_obj_t *parent, int x, int y, int width, int he
     return button;
 }
 
+static lv_obj_t *icon_button_create(lv_obj_t *parent, int x, int y,
+                                    const lv_image_dsc_t *src, int target)
+{
+    lv_obj_t *button = button_create(parent, x, y, ICON_BUTTON_SIZE, ICON_BUTTON_SIZE, NULL, target);
+    lv_obj_set_style_border_width(button, 0, 0);
+    lv_obj_set_style_bg_opa(button, LV_OPA_TRANSP, 0);
+    lv_obj_t *icon = icon_create(button, src, 0, 0);
+    lv_obj_remove_flag(icon, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(icon);
+    return button;
+}
+
+static lv_obj_t *page_title_create(lv_obj_t *screen, const char *text, const lv_font_t *font)
+{
+    return label_create(screen, text, PAGE_TITLE_X, PAGE_TITLE_Y, WIDTH - MARGIN - PAGE_TITLE_X, font);
+}
+
 static void image_update(lv_obj_t *icon, const lv_image_dsc_t *src)
 {
     if (lv_image_get_src(icon) != src) lv_image_set_src(icon, src);
@@ -195,6 +231,7 @@ static void image_update(lv_obj_t *icon, const lv_image_dsc_t *src)
 static int radio_update(lv_obj_t *icon, ui_radio_state_t state, int right,
                          const lv_image_dsc_t *on, const lv_image_dsc_t *disconnected)
 {
+    if (!icon) return right;
     if (state == UI_RADIO_OFF)
     {
         lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN);
@@ -209,7 +246,6 @@ static int radio_update(lv_obj_t *icon, ui_radio_state_t state, int right,
 static void status_render(void)
 {
     char buffer[196];
-    if (!view.battery) return;
     text_update(view.time, status.time_text[0] ? status.time_text : "---- -- --  --:--");
     snprintf(buffer, sizeof(buffer), "%d%%", ui_battery_percent(status.battery_percent));
     text_update(view.percent, buffer);
@@ -217,8 +253,9 @@ static void status_render(void)
         &ui_icon_battery_empty, &ui_icon_battery_mid,
         &ui_icon_battery_full, &ui_icon_battery_charge
     };
-    image_update(view.battery, batteries[ui_battery_icon(status.battery_percent, status.charging)]);
-    int right = radio_update(view.bluetooth, status.bluetooth, WIDTH - MARGIN - 116,
+    if (view.battery)
+        image_update(view.battery, batteries[ui_battery_icon(status.battery_percent, status.charging)]);
+    int right = radio_update(view.bluetooth, status.bluetooth, WIDTH - MARGIN - (view.battery ? 116 : 0),
                               &ui_icon_bt_on, &ui_icon_bt_disconnected);
     radio_update(view.wifi, status.wifi, right, &ui_icon_wifi_on, &ui_icon_wifi_disconnected);
     if (view.recent)
@@ -246,28 +283,19 @@ void launcher_set_status(const launcher_status_t *new_status)
     if (initialized) status_render();
 }
 
-static void header_create(lv_obj_t *screen)
+static void header_create(lv_obj_t *screen, bool show_battery)
 {
     view.time = label_create(screen, "", MARGIN, 25, 322, ui_font_small());
     view.bluetooth = icon_create(screen, &ui_icon_bt_disconnected, 0, 22);
     view.wifi = icon_create(screen, &ui_icon_wifi_disconnected, 0, 22);
-    view.battery = icon_create(screen, &ui_icon_battery_empty, WIDTH - MARGIN - 104, 18);
-    view.percent = label_create(screen, "", WIDTH - MARGIN - 60, 25, 62, ui_font_small());
-    lv_obj_set_style_text_align(view.percent, LV_TEXT_ALIGN_RIGHT, 0);
+    if (show_battery)
+    {
+        view.battery = icon_create(screen, &ui_icon_battery_empty, WIDTH - MARGIN - 104, 18);
+        view.percent = label_create(screen, "", WIDTH - MARGIN - 60, 25, 62, ui_font_small());
+        lv_obj_set_style_text_align(view.percent, LV_TEXT_ALIGN_RIGHT, 0);
+    }
     lv_obj_t *line = panel_create(screen, MARGIN, 74, CONTENT_WIDTH, 1);
     lv_obj_set_style_radius(line, 0, 0);
-}
-
-static void key_hints_create(lv_obj_t *screen)
-{
-    static const lv_image_dsc_t *const keys[] = {&ui_icon_key1, &ui_icon_key2, &ui_icon_key3};
-    static const char *const hints[] = {"上选", "确认", "下选"};
-    for (int i = 0; i < 3; ++i)
-    {
-        int x = MARGIN + 39 + i * 208;
-        icon_create(screen, keys[i], x, 1160);
-        label_create(screen, hints[i], x + 38, 1161, 72, ui_font_small());
-    }
 }
 
 static void home_create(lv_obj_t *screen)
@@ -297,7 +325,6 @@ static void home_create(lv_obj_t *screen)
     view.weather = label_create(quick, "", 22, 124, CONTENT_WIDTH - 46, ui_font_small());
     view.power = label_create(quick, "", 22, 166, CONTENT_WIDTH - 46, ui_font_small());
     button_create(screen, MARGIN, 1060, CONTENT_WIDTH, 70, "进入锁屏", UI_PAGE_LOCK);
-    key_hints_create(screen);
 }
 
 static const lv_image_dsc_t *page_icon(ui_page_id_t page)
@@ -344,15 +371,15 @@ static void bookshelf_page_button(lv_obj_t *screen, int x, const char *text, int
 {
     if (enabled)
     {
-        button_create(screen, x, 1060, 198, 70, text, action);
+        button_create(screen, x, HEIGHT - MARGIN - 70, 298, 70, text, action);
         return;
     }
     /* Disabled page controls remain visible but do not enter the focus group. */
-    lv_obj_t *button = panel_create(screen, x, 1060, 198, 70);
+    lv_obj_t *button = panel_create(screen, x, HEIGHT - MARGIN - 70, 298, 70);
     lv_obj_remove_flag(button, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_state(button, LV_STATE_DISABLED);
     lv_obj_set_style_border_color(button, lv_color_hex(0xBBBBBB), 0);
-    lv_obj_t *label = centered_label(button, text, 0, 0, 174, ui_font_body());
+    lv_obj_t *label = centered_label(button, text, 0, 0, 274, ui_font_body());
     lv_obj_set_style_text_color(label, lv_color_hex(0x999999), 0);
     lv_obj_center(label);
 }
@@ -363,7 +390,7 @@ static void bookshelf_create(lv_obj_t *screen)
     char text[128];
     if (bookshelf_first >= count)
         bookshelf_first = count ? ((count - 1) / BOOKSHELF_PAGE_SIZE) * BOOKSHELF_PAGE_SIZE : 0;
-    label_create(screen, "书架", MARGIN, 103, CONTENT_WIDTH, ui_font_title());
+    page_title_create(screen, "书架", ui_font_title());
 
     static const uint32_t cover_colors[] = {0xEEEEEE, 0xDDDDDD, 0xFFFFFF, 0xCCCCCC};
     for (unsigned slot = 0; slot < BOOKSHELF_PAGE_SIZE && bookshelf_first + slot < count; ++slot)
@@ -395,56 +422,68 @@ static void bookshelf_create(lv_obj_t *screen)
     }
     if (count == 0)
     {
-        centered_label(screen, ui_bookshelf_storage_ready() ? "未检测到TXT书籍" : "存储不可用",
-                       MARGIN, 452, CONTENT_WIDTH, ui_font_body());
-        centered_label(screen, "请将 TXT 文件放入 TF 卡或 NOR 根目录", MARGIN, 510,
-                       CONTENT_WIDTH, ui_font_small());
+        centered_label(screen, "这里空空如也~", MARGIN,
+                       (PAGE_CONTENT_Y + HEIGHT - MARGIN - ui_font_body()->line_height) / 2,
+                       CONTENT_WIDTH, ui_font_body());
+        return;
     }
-    snprintf(text, sizeof(text), "KEY1/KEY3 选择 | KEY2 打开 | 共%u本书", count);
-    centered_label(screen, text, MARGIN, 1018, CONTENT_WIDTH, ui_font_caption());
     bookshelf_page_button(screen, MARGIN, "上一页", BOOKSHELF_PREVIOUS, bookshelf_first > 0);
-    button_create(screen, 243, 1060, 198, 70, "主页面", UI_PAGE_HOME);
-    bookshelf_page_button(screen, 454, "下一页", BOOKSHELF_NEXT,
+    bookshelf_page_button(screen, 354, "下一页", BOOKSHELF_NEXT,
                           bookshelf_first + BOOKSHELF_PAGE_SIZE < count);
-    key_hints_create(screen);
 }
 
 static void weather_time_update(void)
 {
-    /* The header already contains the validated RTC date and time. */
-    if (status.time_text[0] != '-' && strlen(status.time_text) >= 16)
+    const ui_weather_view_t *data = ui_weather_view();
+    if (!weather_widgets.city || weather_widgets.revision == data->revision) return;
+    text_update(weather_widgets.city, data->city);
+    text_update(weather_widgets.time, data->update_time);
+    text_update(weather_widgets.temperature, data->temperature);
+    text_update(weather_widgets.description, data->description);
+    text_update(weather_widgets.range, data->range_wind);
+    text_update(weather_widgets.source, data->source);
+    if (weather_widgets.code != data->code)
+        lv_image_set_src(weather_widgets.icon, ui_weather_icon(data->code, true));
+    weather_widgets.code = data->code;
+    for (unsigned i = 0; i < UI_WEATHER_METRIC_COUNT; ++i)
+        text_update(weather_widgets.metrics[i], data->metrics[i]);
+    for (unsigned i = 0; i < UI_WEATHER_FORECAST_COUNT; ++i)
     {
-        memcpy(weather_update_time, status.time_text + 11, 5);
-        weather_update_time[5] = '\0';
+        const ui_weather_forecast_t *f = &data->forecast[i];
+        text_update(weather_widgets.date[i], f->date);
+        text_update(weather_widgets.text[i], f->text);
+        text_update(weather_widgets.temperatures[i], f->temperature_range);
+        text_update(weather_widgets.wind[i], f->wind);
+        if (weather_widgets.forecast_code[i] != f->code)
+            lv_image_set_src(weather_widgets.forecast_icon[i], ui_weather_icon(f->code, false));
+        weather_widgets.forecast_code[i] = f->code;
     }
-    if (weather_time_label)
-    {
-        char text[32];
-        snprintf(text, sizeof(text), "更新: %s", weather_update_time);
-        text_update(weather_time_label, text);
-    }
+    weather_widgets.revision = data->revision;
 }
 
 static void weather_create(lv_obj_t *screen)
 {
-    const ui_weather_city_t *data = ui_weather_city(weather_city_index);
-    char text[128];
-    icon_create(screen, &ui_icon_location, MARGIN, 103);
-    label_create(screen, data->city, MARGIN + 44, 101, 280, ui_font_title());
-    snprintf(text, sizeof(text), "更新: %s", weather_update_time);
-    weather_time_label = label_create(screen, text, WIDTH - MARGIN - 230, 110,
-                                      230, ui_font_small());
-    lv_obj_set_style_text_align(weather_time_label, LV_TEXT_ALIGN_RIGHT, 0);
+    ui_weather_process();
+    const ui_weather_view_t *data = ui_weather_view();
+    icon_create(screen, &ui_icon_location, PAGE_TITLE_X, 106);
+    weather_widgets.city = label_create(screen, data->city, PAGE_TITLE_X + 44, 101, 272, ui_font_title());
+    weather_widgets.time = label_create(screen, data->update_time, 432, 110, 220, ui_font_small());
+    lv_obj_set_style_text_align(weather_widgets.time, LV_TEXT_ALIGN_RIGHT, 0);
 
-    lv_obj_t *image = icon_create(screen, ui_weather_icon(data->code, true),
-                                  (WIDTH - 160) / 2, 150);
-    lv_obj_set_style_image_recolor(image, lv_color_black(), 0);
-    snprintf(text, sizeof(text), "%d℃", data->temperature);
-    centered_label(screen, text, MARGIN, 316, CONTENT_WIDTH, ui_font_temperature());
-    snprintf(text, sizeof(text), "%s | 体感 %d℃", data->text, data->feels_like);
-    centered_label(screen, text, MARGIN, 403, CONTENT_WIDTH, ui_font_body());
-    snprintf(text, sizeof(text), "H:%d℃   L:%d℃   风：%s", data->high, data->low, data->wind);
-    centered_label(screen, text, MARGIN, 450, CONTENT_WIDTH, ui_font_small());
+    lv_obj_t *content = panel_create(screen, MARGIN, PAGE_CONTENT_Y,
+                                    CONTENT_WIDTH, HEIGHT - PAGE_CONTENT_Y - MARGIN - 84);
+    lv_obj_remove_flag(content, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_border_width(content, 0, 0);
+    lv_obj_set_style_radius(content, 0, 0);
+    lv_obj_set_style_pad_all(content, 0, 0);
+    lv_obj_set_style_pad_row(content, 0, 0);
+    lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+    /* Share spare height across sections without scaling icons or text. */
+    lv_obj_set_flex_align(content, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    weather_widgets.icon = icon_create(content, ui_weather_icon(data->code, true), 0, 0);
+    weather_widgets.temperature = centered_label(content, data->temperature, 0, 0, CONTENT_WIDTH, ui_font_temperature());
+    weather_widgets.description = centered_label(content, data->description, 0, 0, CONTENT_WIDTH, ui_font_body());
+    weather_widgets.range = centered_label(content, data->range_wind, 0, 0, CONTENT_WIDTH, ui_font_small());
 
     static const char *const metric_names[] = {
         "湿度", "风速", "能见度", "云量", "日出", "日落", "气压", "空气"
@@ -453,73 +492,120 @@ static void weather_create(lv_obj_t *screen)
         &ui_icon_humidity, &ui_icon_wind, &ui_icon_visibility, &ui_icon_cloud,
         &ui_icon_sunrise, &ui_icon_sunset, &ui_icon_pressure, &ui_icon_air
     };
+    const int metric_height = 80;
+    const int metric_gap = 14;
+    const int metric_rows = (UI_WEATHER_METRIC_COUNT + 1) / 2;
+    lv_obj_t *metrics = panel_create(content, 0, 0, CONTENT_WIDTH,
+                                    metric_rows * metric_height + (metric_rows - 1) * metric_gap);
+    lv_obj_remove_flag(metrics, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_border_width(metrics, 0, 0);
+    lv_obj_set_style_radius(metrics, 0, 0);
+    lv_obj_set_style_pad_all(metrics, 0, 0);
     for (unsigned i = 0; i < UI_WEATHER_METRIC_COUNT; ++i)
     {
-        lv_obj_t *card = panel_create(screen, MARGIN + (i % 2) * 322,
-                                      494 + (i / 2) * 84, 298, 72);
-        icon_create(card, metric_icons[i], 16, 20);
-        label_create(card, metric_names[i], 64, 7, 216, ui_font_caption());
-        label_create(card, data->metrics[i], 64, 33, 216, ui_font_body());
+        lv_obj_t *card = panel_create(metrics, (i % 2) * 322,
+                                      (i / 2) * (metric_height + metric_gap), 298, metric_height);
+        icon_create(card, metric_icons[i], 16, 24);
+        label_create(card, metric_names[i], 64, 9, 216, ui_font_caption());
+        weather_widgets.metrics[i] = label_create(card, data->metrics[i], 64, 39, 216, ui_font_body());
     }
 
-    label_create(screen, "未来三天预报", MARGIN, 842, CONTENT_WIDTH, ui_font_body());
-    static const char *const days[] = {"明天", "后天", "周一"};
+    label_create(content, "未来三天预报", 0, 0, CONTENT_WIDTH, ui_font_body());
+    const int forecast_height = 64;
+    lv_obj_t *forecasts = panel_create(content, 0, 0, CONTENT_WIDTH,
+                                      UI_WEATHER_FORECAST_COUNT * forecast_height);
+    lv_obj_remove_flag(forecasts, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_border_width(forecasts, 0, 0);
+    lv_obj_set_style_radius(forecasts, 0, 0);
+    lv_obj_set_style_pad_all(forecasts, 0, 0);
     for (unsigned i = 0; i < UI_WEATHER_FORECAST_COUNT; ++i)
     {
         const ui_weather_forecast_t *forecast = &data->forecast[i];
-        int y = 890 + i * 48;
-        label_create(screen, days[i], MARGIN, y + 10, 58, ui_font_small());
-        image = icon_create(screen, ui_weather_icon(forecast->code, false), 100, y);
-        lv_obj_set_style_image_recolor(image, lv_color_black(), 0);
-        label_create(screen, forecast->text, 160, y + 10, 136, ui_font_small());
-        centered_label(screen, forecast->temperature_range, 304, y + 10, 158, ui_font_small());
-        lv_obj_t *wind = label_create(screen, forecast->wind, 474, y + 13, 178, ui_font_caption());
+        int y = i * forecast_height;
+        int text_y = y + (forecast_height - ui_font_small()->line_height) / 2;
+        weather_widgets.date[i] = label_create(forecasts, forecast->date, 0, text_y, 76, ui_font_small());
+        weather_widgets.forecast_icon[i] = icon_create(forecasts, ui_weather_icon(forecast->code, false), 80, y + 8);
+        weather_widgets.text[i] = label_create(forecasts, forecast->text, 138, text_y, 126, ui_font_small());
+        weather_widgets.temperatures[i] = centered_label(forecasts, forecast->temperature_range, 272, text_y, 158, ui_font_small());
+        lv_obj_t *wind = label_create(forecasts, forecast->wind, 442,
+                                      y + (forecast_height - ui_font_caption()->line_height) / 2,
+                                      178, ui_font_caption());
         lv_obj_set_style_text_align(wind, LV_TEXT_ALIGN_RIGHT, 0);
-        lv_obj_t *line = panel_create(screen, MARGIN, y + 47, CONTENT_WIDTH, 1);
+        weather_widgets.wind[i] = wind;
+        weather_widgets.forecast_code[i] = forecast->code;
+        lv_obj_t *line = panel_create(forecasts, 0, y + forecast_height - 1, CONTENT_WIDTH, 1);
         lv_obj_set_style_radius(line, 0, 0);
         lv_obj_set_style_border_color(line, lv_color_hex(0xBBBBBB), 0);
     }
-    snprintf(text, sizeof(text), "数据来源：本地缓存 | 区域：%s", data->region);
-    centered_label(screen, text, MARGIN, 1037, CONTENT_WIDTH, ui_font_caption());
-    button_create(screen, MARGIN, 1068, 198, 70, "城市选择", UI_PAGE_CITY);
-    button_create(screen, 243, 1068, 198, 70, "更新", WEATHER_REFRESH);
-    button_create(screen, 454, 1068, 198, 70, "返回", NAV_BACK);
-    key_hints_create(screen);
-}
-
-static void city_render(void)
-{
-    char text[96];
-    snprintf(text, sizeof(text), "城市选择 | 当前：%s", ui_weather_city(city_selection)->city);
-    text_update(city_title, text);
-    for (unsigned i = 0; i < UI_WEATHER_CITY_COUNT; ++i)
-    {
-        bool selected = i == city_selection;
-        text_update(city_markers[i], selected ? "【已选】" : "");
-        if (selected) lv_obj_add_state(city_buttons[i], LV_STATE_CHECKED);
-        else lv_obj_remove_state(city_buttons[i], LV_STATE_CHECKED);
-    }
+    weather_widgets.source = centered_label(content, data->source, 0, 0, CONTENT_WIDTH, ui_font_caption());
+    weather_widgets.code = data->code;
+    weather_widgets.revision = data->revision;
+    button_create(screen, MARGIN, HEIGHT - MARGIN - 70, CONTENT_WIDTH, 70, "更新", WEATHER_SYNC);
 }
 
 static void city_create(lv_obj_t *screen)
 {
-    city_selection = weather_city_index;
-    city_title = label_create(screen, "", MARGIN, 103, CONTENT_WIDTH, ui_font_body());
-    for (unsigned i = 0; i < UI_WEATHER_CITY_COUNT; ++i)
+    page_title_create(screen, "天气城市ID", ui_font_title());
+    lv_obj_t *quiet = panel_create(screen, (WIDTH - 348) / 2, 296, 348, 348);
+    lv_obj_set_style_border_width(quiet, 0, 0);
+    lv_obj_set_style_radius(quiet, 0, 0);
+    lv_obj_t *qr = lv_qrcode_create(quiet);
+    epd_obj_init(qr);
+    lv_qrcode_set_size(qr, 300);
+    lv_qrcode_set_dark_color(qr, lv_color_black());
+    lv_qrcode_set_light_color(qr, lv_color_white());
+    lv_qrcode_set_quiet_zone(qr, true);
+    lv_obj_center(qr);
+    if (lv_qrcode_update(qr, WEATHER_CITY_LOOKUP_URL, strlen(WEATHER_CITY_LOOKUP_URL)) != LV_RESULT_OK)
+        centered_label(screen, "二维码生成失败", MARGIN, 420, CONTENT_WIDTH, ui_font_body());
+#if defined(PSRAM_CACHE_WB)
+    /* The canvas includes an indexed palette; write back it and every pixel row. */
+    lv_draw_buf_t *qr_buffer = lv_canvas_get_draw_buf(qr);
+    if (qr_buffer) mpu_dcache_clean(qr_buffer->data, qr_buffer->data_size);
+#endif
+    centered_label(screen, "扫码查看城市ID", MARGIN, 696, CONTENT_WIDTH, ui_font_body());
+    button_create(screen, 112, 800, 460, 80, "我已获取城市ID", UI_PAGE_CITY_INPUT);
+}
+
+static void city_input_create(lv_obj_t *screen)
+{
+    weather_config_t cfg;
+    weather_get_config(&cfg);
+    snprintf(city_digits, sizeof(city_digits), "%s", cfg.city_id);
+    page_title_create(screen, "天气城市ID", ui_font_title());
+    centered_label(screen, "请输入数字城市ID", MARGIN, 238, CONTENT_WIDTH, ui_font_body());
+    lv_obj_t *input = panel_create(screen, 64, 302, 556, 88);
+    city_input = centered_label(input, city_digits, 16,
+        (88 - ui_font_title()->line_height) / 2, 524, ui_font_title());
+    /* A static label avoids the textarea cursor's periodic blinking on e-paper. */
+    lv_obj_t *keys = panel_create(screen, MARGIN, 724, CONTENT_WIDTH, 436);
+    static const char *const labels[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "确认", "退"};
+    for (unsigned i = 0; i < 12; ++i)
     {
-        lv_obj_t *button = button_create(screen, MARGIN, 180 + i * 100,
-                                         CONTENT_WIDTH, 80, NULL, CITY_SELECT_BASE + (int)i);
-        city_buttons[i] = button;
-        lv_obj_set_style_bg_color(button, lv_color_hex(0xEEEEEE), LV_STATE_CHECKED);
-        label_create(button, ui_weather_city(i)->city, 24, 24, 380, ui_font_body());
-        city_markers[i] = label_create(button, "", CONTENT_WIDTH - 158, 27,
-                                       134, ui_font_small());
-        lv_obj_set_style_text_align(city_markers[i], LV_TEXT_ALIGN_RIGHT, 0);
+        int target = i < 9 ? CITY_DIGIT_BASE + (int)i + 1 :
+                     i == 9 ? CITY_DIGIT_BASE : i == 10 ? CITY_CONFIRM : CITY_ERASE;
+        button_create(keys, 18 + (i % 3) * 198, 18 + (i / 3) * 102, 186, 88, labels[i], target);
     }
-    city_render();
-    button_create(screen, MARGIN, 1060, 298, 70, "确认", CITY_CONFIRM);
-    button_create(screen, 354, 1060, 298, 70, "取消返回", NAV_BACK);
-    key_hints_create(screen);
+}
+
+static void weather_settings_render(void)
+{
+    weather_config_t cfg;
+    char text[128];
+    weather_get_config(&cfg);
+    snprintf(text, sizeof(text), "天气配置：%s   城市：%s", cfg.api_key[0] ? "已导入" : "未导入",
+             cfg.city[0] ? cfg.city : "未设置");
+    text_update(weather_config_label, text);
+}
+
+static void weather_settings_create(lv_obj_t *screen)
+{
+    page_title_create(screen, "天气设置", ui_font_title());
+    weather_config_label = centered_label(screen, "", MARGIN, 246, CONTENT_WIDTH, ui_font_small());
+    weather_settings_render();
+    button_create(screen, MARGIN, 348, CONTENT_WIDTH, 84, "从 TF 卡导入天气配置", WEATHER_IMPORT);
+    button_create(screen, MARGIN, 464, CONTENT_WIDTH, 84, "天气城市ID", UI_PAGE_CITY);
+    centered_label(screen, "配置文件：qweather.json", MARGIN, 608, CONTENT_WIDTH, ui_font_small());
 }
 
 static void setting_render(ui_setting_id_t id)
@@ -574,23 +660,20 @@ static void setting_link_create(lv_obj_t *screen, const char *text, int y, ui_pa
 
 static void settings_create(lv_obj_t *screen)
 {
-    label_create(screen, "通用功能设置页面", MARGIN, 103, CONTENT_WIDTH, ui_font_title());
+    page_title_create(screen, "通用功能设置页面", ui_font_title());
     for (unsigned i = UI_SETTING_TOUCH; i < UI_SETTING_FONT; ++i)
-        setting_row_create(screen, (ui_setting_id_t)i, 174 + i * 94, 80);
-    setting_link_create(screen, "进入文本设置", 832, UI_PAGE_TEXT_SETTINGS);
-    setting_link_create(screen, "关于设备", 926, UI_PAGE_ABOUT);
-    button_create(screen, MARGIN, 1060, 298, 70, "保存设置", SETTINGS_SAVE);
-    button_create(screen, 354, 1060, 298, 70, "保存 ← 返回", NAV_BACK);
-    key_hints_create(screen);
+        setting_row_create(screen, (ui_setting_id_t)i, 174 + i * 84, 72);
+    setting_link_create(screen, "进入文本设置", 762, UI_PAGE_TEXT_SETTINGS);
+    setting_link_create(screen, "天气设置", 850, UI_PAGE_WEATHER_SETTINGS);
+    setting_link_create(screen, "关于设备", 938, UI_PAGE_ABOUT);
+    button_create(screen, MARGIN, HEIGHT - MARGIN - 70, CONTENT_WIDTH, 70, "保存设置", SETTINGS_SAVE);
 }
 
 static void text_settings_create(lv_obj_t *screen)
 {
-    label_create(screen, "文本设置", MARGIN, 103, CONTENT_WIDTH, ui_font_title());
+    page_title_create(screen, "文本设置", ui_font_title());
     for (unsigned i = UI_SETTING_FONT; i < UI_SETTING_COUNT; ++i)
         setting_row_create(screen, (ui_setting_id_t)i, 174 + (i - UI_SETTING_FONT) * 132, 110);
-    button_create(screen, MARGIN, 1060, CONTENT_WIDTH, 70, "确认返回", NAV_BACK);
-    key_hints_create(screen);
 }
 
 static void popup_close(void)
@@ -598,6 +681,8 @@ static void popup_close(void)
     if (!popup) return;
     lv_obj_delete(popup);
     popup = NULL;
+    popup_text = popup_button = NULL;
+    weather_popup_phase = 0;
     /* The dialog button was appended after the page's focusable controls. */
     if (focus_count) focus_items[--focus_count] = NULL;
     for (unsigned i = 0; i < focus_count; ++i) lv_group_add_obj(group, focus_items[i]);
@@ -615,25 +700,23 @@ static void popup_open(const char *text, const char *detail)
     lv_obj_set_style_radius(popup, 0, 0);
     lv_obj_set_style_border_width(popup, 0, 0);
     lv_obj_set_style_bg_color(popup, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(popup, LV_OPA_40, 0);
+    lv_obj_set_style_bg_opa(popup, LV_OPA_TRANSP, 0);
     lv_obj_t *dialog = panel_create(popup, 54, 438, 576, 282);
     lv_obj_set_style_border_color(dialog, lv_color_hex(0x222222), 0);
     lv_obj_set_style_border_width(dialog, 2, 0);
-    centered_label(dialog, text, 24, detail ? 44 : 74, 528, ui_font_body());
+    popup_text = centered_label(dialog, text, 24, detail ? 44 : 74, 528, ui_font_body());
     if (detail) centered_label(dialog, detail, 24, 102, 528, ui_font_small());
-    lv_obj_t *button = button_create(dialog, 108, 184, 360, 64, "确定", POPUP_CLOSE);
-    lv_group_focus_obj(button);
+    popup_button = button_create(dialog, 108, 184, 360, 64, "确定", POPUP_CLOSE);
+    lv_group_focus_obj(popup_button);
 }
 
 static void placeholder_create(lv_obj_t *screen, ui_page_id_t page)
 {
-    label_create(screen, titles[page], MARGIN, 103, CONTENT_WIDTH, ui_font_title());
+    page_title_create(screen, titles[page], ui_font_title());
     icon_create(screen, page_icon(page), (WIDTH - 80) / 2, 318);
     lv_obj_t *tip = label_create(screen, page == UI_PAGE_WIFI ? "配网功能暂未开放" : "页面入口已预留",
                                  MARGIN, 446, CONTENT_WIDTH, ui_font_body());
     lv_obj_set_style_text_align(tip, LV_TEXT_ALIGN_CENTER, 0);
-    button_create(screen, MARGIN, 1060, CONTENT_WIDTH, 70, "返回", NAV_BACK);
-    key_hints_create(screen);
 }
 
 static void reader_render(void)
@@ -645,7 +728,7 @@ static void reader_render(void)
     else if (!reading->ready)
     {
         text_update(reader_body, "正在排版，请稍候…");
-        text_update(reader_footer, "KEY2 返回书架");
+        text_update(reader_footer, "");
     }
     else
     {
@@ -681,6 +764,7 @@ static void reader_touch_event(lv_event_t *event)
 static void reader_create(lv_obj_t *screen)
 {
     const ui_reader_view_t *reading = ui_reader_view();
+    page_title_create(screen, reading->title, ui_font_small());
     reader_body = label_create(screen, "", reading->margin, UI_READER_TOP,
                                 WIDTH - 2 * reading->margin, reading->font);
     lv_label_set_long_mode(reader_body, LV_LABEL_LONG_WRAP);
@@ -690,7 +774,7 @@ static void reader_create(lv_obj_t *screen)
     lv_obj_set_style_text_color(reader_body, lv_color_black(), 0);
     lv_obj_add_flag(reader_body, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(reader_body, reader_touch_event, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *track = panel_create(screen, MARGIN, 1080, CONTENT_WIDTH, 8);
+    lv_obj_t *track = panel_create(screen, MARGIN, UI_READER_BOTTOM + 20, CONTENT_WIDTH, 8);
     lv_obj_remove_flag(track, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_radius(track, 0, 0);
     reader_progress = panel_create(track, 0, 0, 0, 8);
@@ -698,12 +782,8 @@ static void reader_create(lv_obj_t *screen)
     lv_obj_set_style_radius(reader_progress, 0, 0);
     lv_obj_set_style_border_width(reader_progress, 0, 0);
     lv_obj_set_style_bg_color(reader_progress, lv_color_black(), 0);
-    reader_footer = centered_label(screen, "", MARGIN, 1100, CONTENT_WIDTH, ui_font_caption());
-    centered_label(screen, reading->title, MARGIN, 1130, CONTENT_WIDTH, ui_font_small());
-    static const char *const hints[] = {"1 上一页", "2 书架", "3 下一页"};
-    for (unsigned i = 0; i < 3; ++i)
-        centered_label(screen, hints[i], MARGIN + i * 208, 1166, 196, ui_font_caption());
-    centered_label(screen, "长按 KEY1：阅读设置", MARGIN, 1190, CONTENT_WIDTH, ui_font_caption());
+    reader_footer = centered_label(screen, "", MARGIN, UI_READER_BOTTOM + 40,
+                                   CONTENT_WIDTH, ui_font_caption());
     reader_render();
 }
 
@@ -727,12 +807,15 @@ static void reader_panel_close(void)
     lv_obj_delete(reader_panel);
     reader_panel = reader_option_label = reader_jump_label = NULL;
     reader_confirm_pending = false;
-    focus_count = 0;
+    while (focus_count > reader_panel_focus_start) focus_items[--focus_count] = NULL;
+    for (unsigned i = 0; i < focus_count; ++i) lv_group_add_obj(group, focus_items[i]);
+    if (focus_count) lv_group_focus_obj(focus_items[0]);
 }
 
 static void reader_panel_open(void)
 {
     if (reader_panel || !ui_reader_view()->ready) return;
+    reader_panel_focus_start = focus_count;
     reader_jump = ui_reader_view()->page;
     reader_panel = panel_create(lv_screen_active(), MARGIN, 798, CONTENT_WIDTH, 390);
     lv_obj_set_style_border_color(reader_panel, lv_color_black(), 0);
@@ -747,40 +830,38 @@ static void reader_panel_open(void)
     reader_jump_label = centered_label(reader_panel, "", 226, 180, 168, ui_font_body());
     button_create(reader_panel, 404, 162, 94, 66, "+1", READER_PLUS1);
     button_create(reader_panel, 508, 162, 94, 66, "+5", READER_PLUS5);
-    button_create(reader_panel, 18, 268, 184, 74, "确认", READER_CONFIRM);
-    button_create(reader_panel, 218, 268, 184, 74, "文本设置", UI_PAGE_TEXT_SETTINGS);
-    button_create(reader_panel, 418, 268, 184, 74, "书库", NAV_BACK);
+    button_create(reader_panel, 18, 268, 282, 74, "确认", READER_CONFIRM);
+    button_create(reader_panel, 318, 268, 282, 74, "文本设置", UI_PAGE_TEXT_SETTINGS);
     reader_option_render();
-    lv_group_focus_obj(focus_items[0]);
+    lv_group_focus_obj(focus_items[reader_panel_focus_start]);
 }
 
 static void lock_create(lv_obj_t *screen)
 {
-    lv_obj_t *label = label_create(screen, "RT-Thread EPD Reader", MARGIN, 290,
+    lv_obj_t *label = label_create(screen, "SiFli EPD DEMO", MARGIN, 290,
                                     CONTENT_WIDTH, ui_font_body());
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     icon_create(screen, &ui_icon_bookshelf, (WIDTH - 80) / 2, 388);
     label = label_create(screen, "Welcome", MARGIN, 512, CONTENT_WIDTH, ui_font_title());
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-    label = label_create(screen, "按 KEY2 解锁", MARGIN, 660, CONTENT_WIDTH, ui_font_body());
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-    view.power = label_create(screen, "", MARGIN, 718, CONTENT_WIDTH, ui_font_small());
-    lv_obj_set_style_text_align(view.power, LV_TEXT_ALIGN_CENTER, 0);
-    button_create(screen, MARGIN, 1060, CONTENT_WIDTH, 70, "解锁", NAV_BACK);
+    lv_obj_t *unlock = icon_button_create(screen, (WIDTH - ICON_BUTTON_SIZE) / 2, 646,
+                                         &ui_icon_key2, NAV_BACK);
+    lv_obj_set_style_outline_width(unlock, 0, LV_STATE_FOCUSED);
 }
 
 static void page_create(void)
 {
     lv_group_remove_all_objs(group);
     focus_count = 0;
+    reader_panel_focus_start = 0;
     memset(&view, 0, sizeof(view));
-    weather_time_label = NULL;
-    city_title = NULL;
-    memset(city_buttons, 0, sizeof(city_buttons));
-    memset(city_markers, 0, sizeof(city_markers));
+    memset(&weather_widgets, 0, sizeof(weather_widgets));
+    city_input = weather_config_label = NULL;
     memset(setting_views, 0, sizeof(setting_views));
     popup = NULL;
     popup_previous_focus = NULL;
+    popup_text = popup_button = NULL;
+    weather_popup_phase = 0;
     reader_body = reader_footer = reader_progress = reader_panel = NULL;
     reader_option_label = reader_jump_label = NULL;
     lv_obj_t *screen = lv_obj_create(NULL);
@@ -790,7 +871,7 @@ static void page_create(void)
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
     lv_obj_set_style_text_font(screen, ui_font_body(), 0);
     ui_nav_entry_t *entry = ui_nav_current(&navigation);
-    if (entry->page != UI_PAGE_READER) header_create(screen);
+    if (entry->page != UI_PAGE_READER) header_create(screen, entry->page != UI_PAGE_LOCK);
     if (entry->page == UI_PAGE_HOME) home_create(screen);
     else if (entry->page == UI_PAGE_LOCK) lock_create(screen);
     else if (entry->page == UI_PAGE_BOOKSHELF) bookshelf_create(screen);
@@ -798,12 +879,12 @@ static void page_create(void)
     else if (entry->page == UI_PAGE_WEATHER) weather_create(screen);
     else if (entry->page == UI_PAGE_SETTINGS) settings_create(screen);
     else if (entry->page == UI_PAGE_TEXT_SETTINGS) text_settings_create(screen);
-    else if (entry->page == UI_PAGE_CITY)
-    {
-        city_create(screen);
-        entry->focus = (uint8_t)weather_city_index;
-    }
+    else if (entry->page == UI_PAGE_CITY) city_create(screen);
+    else if (entry->page == UI_PAGE_CITY_INPUT) city_input_create(screen);
+    else if (entry->page == UI_PAGE_WEATHER_SETTINGS) weather_settings_create(screen);
     else placeholder_create(screen, entry->page);
+    if (entry->page != UI_PAGE_HOME && entry->page != UI_PAGE_LOCK)
+        icon_button_create(screen, MARGIN, BACK_BUTTON_Y, &ui_icon_back, NAV_BACK);
     if (focus_count) lv_group_focus_obj(focus_items[entry->focus < focus_count ? entry->focus : 0]);
     status_render();
     /* A zero-duration load deletes the previous tree without an animation timer. */
@@ -836,6 +917,8 @@ bool launcher_init(void)
     lv_style_set_shadow_width(&epd_style, 0);
     lv_group_set_wrap(group, true);
     ui_nav_init(&navigation);
+    ui_weather_process();
+    ui_app_set_weather_summary(ui_weather_view()->summary);
     page_create();
     initialized = true;
     return true;
@@ -848,6 +931,7 @@ ui_page_id_t launcher_current_page(void)
 
 void launcher_open(ui_page_id_t page)
 {
+    if (weather_popup_phase) return;
     if (page == UI_PAGE_READER && !reader_session) return;
     if (initialized && pending_page == NAV_IDLE && page >= UI_PAGE_HOME && page < UI_PAGE_COUNT)
         pending_page = page;
@@ -855,7 +939,7 @@ void launcher_open(ui_page_id_t page)
 
 void launcher_key(launcher_key_t key)
 {
-    if (!initialized || pending_page != NAV_IDLE) return;
+    if (!initialized || pending_page != NAV_IDLE || weather_popup_phase) return;
     if (launcher_current_page() == UI_PAGE_READER)
     {
         if (!lv_refreshing_done()) return;
@@ -904,9 +988,83 @@ void launcher_key(launcher_key_t key)
     }
 }
 
+static void weather_action_start(weather_job_t job)
+{
+    if (popup) return;
+    if (weather_request_job(job, job == WEATHER_JOB_CITY ? city_digits : NULL, &weather_ticket) != RT_EOK)
+    {
+        popup_open(job == WEATHER_JOB_SYNC ? "同步失败，请重试" : "操作失败，请重试", NULL);
+        return;
+    }
+    weather_job = job;
+    popup_open("正在同步", NULL);
+    lv_group_remove_all_objs(group);
+    lv_obj_add_flag(popup_button, LV_OBJ_FLAG_HIDDEN);
+    weather_popup_phase = 1;
+    /* Flush the waiting message once; no spinner, animation or blinking cursor. */
+    lv_refr_now(NULL);
+}
+
+static void weather_ui_process(void)
+{
+    uint32_t now = lv_tick_get();
+    if (lv_tick_elaps(weather_poll_tick) >= 250)
+    {
+        weather_poll_tick = now;
+        if (ui_weather_process()) ui_app_set_weather_summary(ui_weather_view()->summary);
+    }
+    if (!popup && lv_refreshing_done()) weather_time_update();
+    if (!weather_popup_phase || !lv_refreshing_done()) return;
+    if (weather_popup_phase == 1)
+    {
+        weather_result_t result;
+        weather_get_result(&result);
+        if (result.ticket == weather_ticket && result.busy) return;
+        bool success = result.ticket == weather_ticket && result.success;
+        const char *message = result.ticket == weather_ticket ? result.message : "操作失败，请重试";
+        if (weather_job == WEATHER_JOB_SYNC) message = success ? "同步成功" : "同步失败，请重试";
+        text_update(popup_text, message);
+        if (success)
+        {
+            weather_popup_phase = 2;
+            lv_refr_now(NULL);
+        }
+        else
+        {
+            weather_popup_phase = 0;
+            lv_obj_remove_flag(popup_button, LV_OBJ_FLAG_HIDDEN);
+            lv_group_add_obj(group, popup_button);
+            lv_group_focus_obj(popup_button);
+        }
+    }
+    else if (weather_popup_phase == 2)
+    {
+        weather_popup_tick = now;
+        weather_popup_phase = 3;
+    }
+    else if (lv_tick_elaps(weather_popup_tick) >= 1000)
+    {
+        bool return_to_settings = weather_job == WEATHER_JOB_CITY;
+        popup_close();
+        if (return_to_settings)
+        {
+            while (navigation.depth > 1 && launcher_current_page() != UI_PAGE_SETTINGS)
+                ui_nav_back(&navigation);
+            page_create();
+        }
+        else if (launcher_current_page() == UI_PAGE_WEATHER_SETTINGS) weather_settings_render();
+        else
+        {
+            ui_weather_process();
+            weather_time_update();
+        }
+    }
+}
+
 void launcher_process(void)
 {
     if (!initialized) return;
+    weather_ui_process();
     if (launcher_current_page() == UI_PAGE_READER && (!reader_panel || reader_confirm_pending) &&
         !popup && lv_refreshing_done())
     {
@@ -987,12 +1145,14 @@ void launcher_process(void)
         popup_close();
         return;
     }
-    if (target == WEATHER_REFRESH && launcher_current_page() == UI_PAGE_WEATHER)
+    if (target == WEATHER_SYNC && launcher_current_page() == UI_PAGE_WEATHER)
     {
-        weather_time_update();
-        char text[96];
-        snprintf(text, sizeof(text), "正在刷新 %s 天气数据...", ui_weather_city(weather_city_index)->city);
-        popup_open(text, "超时将使用本地缓存");
+        weather_action_start(WEATHER_JOB_SYNC);
+        return;
+    }
+    if (target == WEATHER_IMPORT && launcher_current_page() == UI_PAGE_WEATHER_SETTINGS)
+    {
+        weather_action_start(WEATHER_JOB_IMPORT);
         return;
     }
     if (launcher_current_page() == UI_PAGE_SETTINGS || launcher_current_page() == UI_PAGE_TEXT_SETTINGS)
@@ -1042,19 +1202,30 @@ void launcher_process(void)
             target = UI_PAGE_READER;
         }
     }
-    if (launcher_current_page() == UI_PAGE_CITY)
+    if (launcher_current_page() == UI_PAGE_CITY_INPUT)
     {
-        if (target >= CITY_SELECT_BASE && target < CITY_SELECT_BASE + UI_WEATHER_CITY_COUNT)
+        size_t length = strlen(city_digits);
+        if (target >= CITY_DIGIT_BASE && target < CITY_DIGIT_BASE + 10)
         {
-            city_selection = (unsigned)(target - CITY_SELECT_BASE);
-            city_render();
+            if (length + 1 < sizeof(city_digits))
+            {
+                city_digits[length] = '0' + target - CITY_DIGIT_BASE;
+                city_digits[length + 1] = '\0';
+                text_update(city_input, city_digits);
+            }
+            return;
+        }
+        if (target == CITY_ERASE)
+        {
+            if (length) city_digits[length - 1] = '\0';
+            text_update(city_input, city_digits);
             return;
         }
         if (target == CITY_CONFIRM)
         {
-            weather_city_index = city_selection;
-            weather_time_update();
-            target = NAV_BACK;
+            if (!length) popup_open("请输入数字城市ID", NULL);
+            else weather_action_start(WEATHER_JOB_CITY);
+            return;
         }
     }
     ui_page_id_t old_page = launcher_current_page();

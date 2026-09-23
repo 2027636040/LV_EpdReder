@@ -104,37 +104,15 @@ static void print_weather_snapshot(void)
     rt_kprintf("======================================\n");
 }
 
-static void weather_wait_done(void)
-{
-    int i;
-    int seen_refreshing = 0;
-
-    for (i = 0; i < 150; i++) /* 最多 30s */
-    {
-        weather_state_t st = weather_get_state();
-
-        if (st == WEATHER_STATE_REFRESHING)
-        {
-            seen_refreshing = 1;
-        }
-        else if (seen_refreshing)
-        {
-            return; /* 已离开刷新态 -> 完成 */
-        }
-        else if (i >= 10)
-        {
-            return; /* 2s 内未观察到刷新态，视为瞬时完成 */
-        }
-
-        rt_thread_mdelay(200);
-    }
-}
-
 static void cmd_weather_status(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
     print_weather_snapshot();
+    weather_result_t job;
+    weather_get_result(&job);
+    rt_kprintf("任务 %u: %s %s\n", (unsigned)job.ticket,
+               job.busy ? "执行中" : "已结束", job.message);
 }
 
 static void cmd_weather_refresh(int argc, char **argv)
@@ -151,32 +129,24 @@ static void cmd_weather_refresh(int argc, char **argv)
         return;
     }
 
-    rt_kprintf("refresh requested, waiting for result...\n");
-    weather_wait_done();
-    print_weather_snapshot();
+    rt_kprintf("refresh queued; use 'svc weather status' to check the result\n");
 }
 
 static void cmd_weather_city(int argc, char **argv)
 {
     if (argc < 2)
     {
-        const weather_city_t *list;
-        int count = 0;
-        int i;
-
-        rt_kprintf("current city: %s\n", weather_get_city());
-        list = weather_get_city_list(&count);
-        rt_kprintf("available   :");
-        for (i = 0; i < count; i++)
-            rt_kprintf(" %s", list[i].id);
-        rt_kprintf("\n");
+        weather_config_t cfg;
+        weather_get_config(&cfg);
+        rt_kprintf("current city: %s (%s)\n", cfg.city, cfg.city_id);
+        rt_kprintf("usage: svc weather city <numeric LocationID>\n");
         return;
     }
 
     if (weather_set_city(argv[1]) != RT_EOK)
-        rt_kprintf("invalid city id \"%s\" (use \"svc weather city\" to list)\n", argv[1]);
+        rt_kprintf("city request rejected (invalid ID or service busy)\n");
     else
-        rt_kprintf("city set to: %s\n", weather_get_city());
+        rt_kprintf("city validation queued; setting changes only after successful lookup and save\n");
 }
 
 /*---------------------------------------------------------------------------*/

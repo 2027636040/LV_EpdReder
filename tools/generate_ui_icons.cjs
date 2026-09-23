@@ -16,6 +16,7 @@ const icons = [
     ['battery_charge', '电池充电_battery-charge.svg', 40],
     ['key1', '按键一_one-key.svg', 28], ['key2', '按键二_two-key.svg', 28],
     ['key3', '按键三_three-key.svg', 28],
+    ['back', '返回.svg', 32],
     ['location', '位置.svg', 32], ['humidity', '湿度.svg', 32],
     ['wind', '风速.svg', 32], ['visibility', '能见度.svg', 32],
     ['cloud', '云量.svg', 32], ['sunrise', '日出_sunrise.svg', 32],

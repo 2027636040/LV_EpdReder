@@ -16,6 +16,7 @@
  * 注意：对外符号统一使用 btpan_ 前缀（SDK 已占用 bt_pan_ 前缀）。
  */
 #include "bt_pan.h"
+#include "pan_time.h"
 
 #include <string.h>
 
@@ -99,6 +100,7 @@ static void btpan_notify_state(void)
         return;
 
     g_pan.last_state = state;
+    pan_time_set_link(state == BTPAN_STATE_NETWORK_READY);
     if (g_pan.event_cb != RT_NULL)
         g_pan.event_cb(state);
 }
@@ -506,6 +508,10 @@ rt_err_t btpan_init(const char *device_name)
     }
 
     g_pan.initialized = RT_TRUE;
+
+    rt_err_t time_result = pan_time_init();
+    if (time_result != RT_EOK)
+        LOG_W("PAN time service init failed: %d", time_result);
 
     bt_interface_register_bt_event_notify_callback(btpan_bt_event_handle);
     rt_thread_startup(g_pan.worker);
