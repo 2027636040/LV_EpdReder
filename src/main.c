@@ -20,6 +20,7 @@
 #include "reader.h"    /* 阅读引擎服务      */
 #include "buttons.h"   /* 按键服务（57 ADC 按键） */
 #include "epd_waveform.h" /* EPD 波形（验证页：请求全刷） */
+#include "board_service.h" /* 板级服务（TF 卡文件系统挂载） */
 
 #define DBG_TAG "main"
 #define DBG_LVL DBG_INFO
@@ -111,6 +112,11 @@ int main(void)
         return ret;
     }
     mem_report("after lvgl");
+
+    /* 挂载 TF 卡文件系统（挂载点 "/"，无卡时回退内置 flash 分区）；
+       书库/阅读服务以该根目录为工作目录，书籍直接放卡根目录即可 */
+    board_start_filesystem();
+    mem_report("after mount");
 
     /* ---- 数据服务初始化（我们负责，UI 通过头文件接口访问） ---- */
     if (btpan_init("RT-EPD-Reader") == RT_EOK)
