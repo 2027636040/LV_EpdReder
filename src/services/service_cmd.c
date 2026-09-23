@@ -32,7 +32,7 @@
 #include "weather.h"
 #include "bt_pan.h"
 #include "bookshelf.h"
-#include "reader.h"
+#include "services/reader/reader.h"
 
 #define DBG_TAG "svc.cmd"
 #define DBG_LVL DBG_INFO

@@ -38,6 +38,7 @@ typedef struct
     uint32_t file_size;  /* 文本总字节数（含 data_start 之前的内容） */
     char encoding[16];
     rt_bool_t gbk;       /* true = GBK 源文件（读取时转 UTF-8 输出） */
+    rt_bool_t detected_gbk;
     uint32_t position;
 } reader_ctx_t;
 
@@ -61,29 +62,6 @@ static int utf8_char_len(unsigned char c)
     return 1; /* 非法字节按单字节处理 */
 }
 
-/**
- * @brief 裁掉尾部不完整的多字节字符，返回可安全输出的长度。
- */
-static int utf8_trim_tail(const char *buf, int n)
-{
-    while (n > 0)
-    {
-        int i = n - 1;
-        int clen;
-
-        /* 回退到字符首字节 */
-        while (i > 0 && (((unsigned char)buf[i] & 0xC0) == 0x80))
-            i--;
-
-        clen = utf8_char_len((unsigned char)buf[i]);
-        if (i + clen <= n)
-            break; /* 尾部字符完整 */
-
-        n = i; /* 截掉不完整字符 */
-    }
-
-    return n;
-}
 
 /*---------------------------------------------------------------------------*/
 /* GBK → UTF-8（复用 FatFs 936 码表）                                          */
@@ -173,63 +151,6 @@ static rt_bool_t detect_gbk(int fd, uint32_t size)
     return utf8_valid(sample, n) ? RT_FALSE : RT_TRUE;
 }
 
-/* GBK 读取并转 UTF-8（调用方需已持有读锁）：
-   最多消费 (buf_size-1)*2/3 个原始字节，保证输出不超缓冲 */
-static int reader_read_gbk(int fd, uint32_t offset, char *buf, rt_size_t buf_size, uint32_t *next_offset)
-{
-    rt_size_t max_raw = (buf_size - 1) * 2 / 3;
-    int n;
-    int out = 0;
-    int i;
-
-    if (max_raw > sizeof(g_gbk_raw))
-        max_raw = sizeof(g_gbk_raw);
-
-    if (lseek(fd, (off_t)offset, SEEK_SET) < 0)
-        return -RT_EIO;
-
-    n = read(fd, g_gbk_raw, max_raw);
-    if (n < 0)
-        return -RT_EIO;
-
-    /* 尾部只剩 GBK 首字节 → 不消费，留给下次（偏移始终落在字符边界） */
-    if (n > 0 && is_gbk_lead(g_gbk_raw[n - 1]))
-        n--;
-
-    for (i = 0; i < n;)
-    {
-        unsigned char c = g_gbk_raw[i];
-
-        if (c < 0x80) /* ASCII 直通 */
-        {
-            buf[out++] = (char)c;
-            i++;
-            continue;
-        }
-
-        if (is_gbk_lead(c) && (i + 1) < n &&
-            g_gbk_raw[i + 1] >= 0x40 && g_gbk_raw[i + 1] != 0x7F)
-        {
-            unsigned short uni = ff_oem2uni((unsigned short)((c << 8) | g_gbk_raw[i + 1]),
-                                            READER_GBK_CODE_PAGE);
-            if (uni != 0)
-                out += utf8_emit(uni, &buf[out]);
-            else
-                buf[out++] = '?'; /* 码表未定义（含 GB18030 四字节序列） */
-            i += 2;
-            continue;
-        }
-
-        buf[out++] = '?'; /* 非法字节 */
-        i++;
-    }
-
-    buf[out] = '\0';
-    if (next_offset != RT_NULL)
-        *next_offset = offset + (uint32_t)n;
-
-    return out;
-}
 
 /*---------------------------------------------------------------------------*/
 /* 生命周期 */
@@ -298,6 +219,11 @@ rt_err_t reader_open(const char *path)
     size = (uint32_t)sz;
 
     /* BOM 检测（UTF-8 BOM 跳过） */
+    if (lseek(fd, 0, SEEK_SET) < 0)
+    {
+        close(fd);
+        return -RT_EIO;
+    }
     if (size >= 3 && read(fd, bom, 3) == 3)
     {
         if (memcmp(bom, UTF8_BOM, 3) == 0)
@@ -323,6 +249,7 @@ rt_err_t reader_open(const char *path)
     g_reader.file_size = size;
     g_reader.position = start;
     g_reader.gbk = gbk;
+    g_reader.detected_gbk = gbk;
     rt_snprintf(g_reader.encoding, sizeof(g_reader.encoding), gbk ? "GBK" : "UTF-8");
     rt_mutex_release(g_lock);
 
@@ -358,6 +285,7 @@ bool reader_get_info(reader_info_t *out)
     rt_snprintf(out->path, sizeof(out->path), "%s", g_reader.path);
     rt_snprintf(out->title, sizeof(out->title), "%s", g_reader.title);
     out->file_size = g_reader.file_size;
+    out->data_start = g_reader.data_start;
     rt_snprintf(out->encoding, sizeof(out->encoding), "%s", g_reader.encoding);
     out->position = g_reader.position;
     rt_mutex_release(g_lock);
@@ -367,52 +295,97 @@ bool reader_get_info(reader_info_t *out)
 /*---------------------------------------------------------------------------*/
 /* 文本读取 */
 /*---------------------------------------------------------------------------*/
+rt_err_t reader_set_encoding(unsigned encoding)
+{
+    if (!g_inited || encoding > 2) return -RT_EINVAL;
+    rt_mutex_take(g_lock, RT_WAITING_FOREVER);
+    g_reader.gbk = encoding == 0 ? g_reader.detected_gbk : encoding == 2;
+    rt_snprintf(g_reader.encoding, sizeof(g_reader.encoding), g_reader.gbk ? "GBK" : "UTF-8");
+    rt_mutex_release(g_lock);
+    return RT_EOK;
+}
+
+int reader_read_mapped(uint32_t offset, char *buf, rt_size_t buf_size,
+                       uint32_t *offsets, uint32_t *next_offset)
+{
+    int out = 0, i = 0, n;
+    if (!buf || buf_size < 5 || !g_inited) return -RT_EINVAL;
+    buf[0] = '\0';
+    rt_mutex_take(g_lock, RT_WAITING_FOREVER);
+    if (!g_reader.opened) { out = -RT_ERROR; goto done; }
+    if (offset < g_reader.data_start) offset = g_reader.data_start;
+    if (offset > g_reader.file_size) offset = g_reader.file_size;
+    if (lseek(g_reader.fd, offset, SEEK_SET) < 0) { out = -RT_EIO; goto done; }
+    n = read(g_reader.fd, g_gbk_raw, sizeof(g_gbk_raw));
+    if (n < 0) { out = -RT_EIO; goto done; }
+    while (i < n)
+    {
+        unsigned char c = g_gbk_raw[i];
+        char encoded[4];
+        int source_len = 1, length = 1;
+        encoded[0] = '?';
+        if (c < 0x80)
+        {
+            encoded[0] = (char)c;
+            if (c == '\r')
+            {
+                if (i + 1 == n && offset + n < g_reader.file_size) break;
+                if (i + 1 < n && g_gbk_raw[i + 1] == '\n') source_len = 2;
+                encoded[0] = '\n';
+            }
+            else if (c == '\t') encoded[0] = ' ';
+            else if (c < 32 && c != '\n') encoded[0] = ' ';
+        }
+        else if (g_reader.gbk)
+        {
+            if (is_gbk_lead(c))
+            {
+                if (i + 1 == n && offset + n < g_reader.file_size) break;
+                if (i + 1 < n && g_gbk_raw[i + 1] >= 0x40 &&
+                    g_gbk_raw[i + 1] <= 0xFE && g_gbk_raw[i + 1] != 0x7F)
+                {
+                    unsigned short uni = ff_oem2uni((c << 8) | g_gbk_raw[i + 1], READER_GBK_CODE_PAGE);
+                    if (uni) length = utf8_emit(uni, encoded);
+                    source_len = 2;
+                }
+            }
+        }
+        else
+        {
+            int len = utf8_char_len(c);
+            rt_bool_t valid = c >= 0xC2 && c <= 0xF4 && len > 1;
+            if (valid && i + len > n && offset + n < g_reader.file_size) break;
+            if (i + len > n) valid = RT_FALSE;
+            for (int k = 1; valid && k < len; ++k)
+                if ((g_gbk_raw[i + k] & 0xC0) != 0x80) valid = RT_FALSE;
+            if (valid && ((c == 0xE0 && g_gbk_raw[i + 1] < 0xA0) ||
+                          (c == 0xED && g_gbk_raw[i + 1] >= 0xA0) ||
+                          (c == 0xF0 && g_gbk_raw[i + 1] < 0x90) ||
+                          (c == 0xF4 && g_gbk_raw[i + 1] >= 0x90))) valid = RT_FALSE;
+            if (valid)
+            {
+                source_len = length = len;
+                memcpy(encoded, &g_gbk_raw[i], len);
+            }
+        }
+        if ((rt_size_t)(out + length) >= buf_size) break;
+        if (offsets)
+            for (int k = 0; k < length; ++k) offsets[out + k] = offset + i;
+        memcpy(buf + out, encoded, length);
+        out += length;
+        i += source_len;
+    }
+    buf[out] = '\0';
+    if (offsets) offsets[out] = offset + i;
+    if (next_offset) *next_offset = offset + i;
+done:
+    rt_mutex_release(g_lock);
+    return out;
+}
+
 int reader_read_text(uint32_t offset, char *buf, rt_size_t buf_size, uint32_t *next_offset)
 {
-    int n;
-
-    if (buf == RT_NULL || buf_size < 2 || !g_inited)
-        return -RT_EINVAL;
-
-    rt_mutex_take(g_lock, RT_WAITING_FOREVER);
-
-    if (!g_reader.opened || g_reader.fd < 0)
-    {
-        rt_mutex_release(g_lock);
-        return -RT_ERROR;
-    }
-
-    if (g_reader.gbk)
-    {
-        n = reader_read_gbk(g_reader.fd, offset, buf, buf_size, next_offset);
-        rt_mutex_release(g_lock);
-        return n;
-    }
-
-    if (lseek(g_reader.fd, (off_t)offset, SEEK_SET) < 0)
-    {
-        rt_mutex_release(g_lock);
-        return -RT_EIO;
-    }
-
-    n = read(g_reader.fd, buf, buf_size - 1);
-    if (n < 0)
-    {
-        rt_mutex_release(g_lock);
-        return -RT_EIO;
-    }
-
-    buf[n] = '\0';
-
-    /* 尾部不完整字符截断（下次从该字符重新读） */
-    n = utf8_trim_tail(buf, n);
-    buf[n] = '\0';
-
-    if (next_offset != RT_NULL)
-        *next_offset = offset + (uint32_t)n;
-
-    rt_mutex_release(g_lock);
-    return n;
+    return reader_read_mapped(offset, buf, buf_size, RT_NULL, next_offset);
 }
 
 int reader_read_next(char *buf, rt_size_t buf_size)

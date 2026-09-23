@@ -92,6 +92,8 @@ int bookshelf_refresh(void)
             if (ent->d_name[0] == '.' || !path_is_txt(ent->d_name))
                 continue;
 
+            if (strlen(g_dir) + strlen(ent->d_name) >= sizeof(full))
+                continue;
             rt_snprintf(full, sizeof(full), "%s%s", g_dir, ent->d_name);
             if (stat(full, &st) != 0 || !S_ISREG(st.st_mode))
                 continue;
@@ -102,10 +104,15 @@ int bookshelf_refresh(void)
             /* 书名 = 文件名去掉 ".txt" 后缀（对齐初版显示纯书名） */
             nlen = strlen(ent->d_name) - 4;
             if (nlen >= sizeof(it->name))
+            {
                 nlen = sizeof(it->name) - 1;
+                while (nlen && (((unsigned char)ent->d_name[nlen] & 0xC0) == 0x80))
+                    --nlen;
+            }
             memcpy(it->name, ent->d_name, nlen);
             it->name[nlen] = '\0';
             it->size = (uint32_t)st.st_size;
+            it->modified = (uint32_t)st.st_mtime;
             it->progress = 0; /* TODO: 阅读进度持久化后回填 */
             count++;
         }
@@ -136,7 +143,7 @@ int bookshelf_refresh(void)
 
     LOG_I("bookshelf scan: %d book(s) in %s", count, g_dir);
     bookshelf_notify();
-    return count;
+    return dir ? count : -RT_EIO;
 }
 
 int bookshelf_count(void)

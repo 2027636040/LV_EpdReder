@@ -21,8 +21,8 @@
 extern "C" {
 #endif
 
-#define BOOKSHELF_PATH_MAX  64
-#define BOOKSHELF_NAME_MAX  48
+#define BOOKSHELF_PATH_MAX  256
+#define BOOKSHELF_NAME_MAX  128
 #define BOOKSHELF_MAX_ITEMS 32 /**< 单次最多枚举的书籍数量 */
 
 /** 书籍条目 */
@@ -31,6 +31,7 @@ typedef struct
     char path[BOOKSHELF_PATH_MAX]; /**< 完整路径：/xxx.txt */
     char name[BOOKSHELF_NAME_MAX]; /**< 书名（文件名去掉 .txt 后缀） */
     uint32_t size;                 /**< 文件大小（字节） */
+    uint32_t modified;
     int progress;                  /**< 阅读进度 0~100（未读 = 0） */
 } bookshelf_item_t;
 

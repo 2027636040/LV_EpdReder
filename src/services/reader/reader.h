@@ -30,6 +30,7 @@ typedef struct
     char path[BOOKSHELF_PATH_MAX]; /**< 文件路径 */
     char title[BOOKSHELF_NAME_MAX]; /**< 文件名 */
     uint32_t file_size;            /**< 文件总字节数 */
+    uint32_t data_start;           /**< 原文件正文起点，跳过 UTF-8 BOM */
     char encoding[16];             /**< 检测到的编码："UTF-8" / "GBK" */
     uint32_t position;             /**< 当前读取位置（字节偏移） */
 } reader_info_t;
@@ -55,7 +56,7 @@ bool reader_get_info(reader_info_t *out);
 
 /**
  * @brief 从指定偏移读取一段 UTF-8 文本（无状态，供 UI 分页取词）
- * @param offset       字节偏移（从文件文本起点算）
+ * @param offset       原文件绝对字节偏移（包含 BOM，调用方应保存字符边界）
  * @param buf          输出缓冲
  * @param buf_size     缓冲大小（实际最多读 buf_size-1 字节）
  * @param next_offset  输出：下一次应读取的偏移（保证落在完整字符边界）
@@ -65,6 +66,14 @@ bool reader_get_info(reader_info_t *out);
  *       前进量可能不等（转码膨胀/收缩所致）
  */
 int reader_read_text(uint32_t offset, char *buf, rt_size_t buf_size, uint32_t *next_offset);
+
+/* offsets has buf_size entries. At each UTF-8 character boundary it stores
+ * the absolute source-file offset, including offsets[returned_length].
+ * CRLF/CR are normalized to LF; invalid characters become '?'. */
+int reader_read_mapped(uint32_t offset, char *buf, rt_size_t buf_size,
+                       uint32_t *offsets, uint32_t *next_offset);
+/* 0: automatic detection, 1: UTF-8, 2: GBK. */
+rt_err_t reader_set_encoding(unsigned encoding);
 
 /**
  * @brief 从当前 position 读取并自动前进（顺序阅读用）
