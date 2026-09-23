@@ -4,6 +4,10 @@ project/.sconsign.dblite
 project/sf-pkgs/
 project/__pycache__/
 
+# Build artifacts (in-source objects)
+*.o
+*.obj
+
 # Python
 __pycache__/
 *.pyc
