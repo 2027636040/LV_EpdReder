@@ -82,6 +82,9 @@ static const LCDC_InitTypeDef lcdc_int_cfg_edp_16bit =
 static LCDC_InitTypeDef lcdc_int_cfg;
 static void  LCD_WriteReg(LCDC_HandleTypeDef *hlcdc, uint16_t LCD_Reg, uint8_t *Parameters, uint32_t NbParameters);
 static uint32_t LCD_ReadData(LCDC_HandleTypeDef *hlcdc, uint16_t RegValue, uint8_t ReadSize);
+static void epd_poweroff_entry(void *parameter);
+static struct rt_semaphore epd_refresh_done;
+static rt_thread_t epd_poweroff_thread;
 
 
 
@@ -100,6 +103,17 @@ static uint32_t LCD_ReadData(LCDC_HandleTypeDef *hlcdc, uint16_t RegValue, uint8
 static void LCD_Init(LCDC_HandleTypeDef *hlcdc)
 {
     uint8_t parameter[32];
+
+    if (epd_poweroff_thread == RT_NULL)
+    {
+        rt_err_t err = rt_sem_init(&epd_refresh_done, "epd_done", 0, RT_IPC_FLAG_FIFO);
+        RT_ASSERT(err == RT_EOK);
+        epd_poweroff_thread = rt_thread_create("epd_off", epd_poweroff_entry, hlcdc,
+                                              1024, RT_THREAD_PRIORITY_MAX / 2, 10);
+        RT_ASSERT(epd_poweroff_thread != RT_NULL);
+        err = rt_thread_startup(epd_poweroff_thread);
+        RT_ASSERT(err == RT_EOK);
+    }
 
     memcpy(&lcdc_int_cfg, &lcdc_int_cfg_edp_16bit, sizeof(lcdc_int_cfg));
     memcpy(&hlcdc->Init, &lcdc_int_cfg, sizeof(LCDC_InitTypeDef));
@@ -124,7 +138,6 @@ static void LCD_Init(LCDC_HandleTypeDef *hlcdc)
 #else
     tps_init(1000); //-1.00V
 #endif
-    tps_exit_sleep();
 }
 
 
@@ -365,6 +378,26 @@ static uint32_t curr_frame; //Current flushing frame index
 static HAL_LCDC_PixelFormat ori_format;
 static uint32_t lut[HAL_LCDC_LOOKUP_TABLE_SIZE >> 2];
 
+static void epd_poweroff_entry(void *parameter)
+{
+    LCDC_HandleTypeDef *hlcdc = (LCDC_HandleTypeDef *)parameter;
+
+    while (1)
+    {
+        rt_err_t err = rt_sem_take(&epd_refresh_done, RT_WAITING_FOREVER);
+        RT_ASSERT(err == RT_EOK);
+
+        /* Keep the LCD task waiting until the panel has finished powering down. */
+        tps_enter_sleep();
+        void (*callback)(struct __LCDC_HandleTypeDef *) = Ori_XferCpltCallback;
+        Ori_XferCpltCallback = NULL;
+        if (callback)
+        {
+            callback(hlcdc);
+        }
+    }
+}
+
 /*
 */
 static uint32_t StartFrame(LCDC_HandleTypeDef *hlcdc, uint32_t frame_idx)
@@ -392,8 +425,9 @@ static void LCDC_SendLineCpltCbk(LCDC_HandleTypeDef *hlcdc)
         LOG_I("Take %d ticks", rt_tick_get() - start_tick);
 
         HAL_LCDC_LayerSetFormat(hlcdc, HAL_LCDC_LAYER_DEFAULT, ori_format); //Restore layer format
-        if (Ori_XferCpltCallback) Ori_XferCpltCallback(hlcdc);
-        Ori_XferCpltCallback = NULL;
+        /* The TPS power-down sequence sleeps, so defer it out of the ISR. */
+        rt_err_t err = rt_sem_release(&epd_refresh_done);
+        RT_ASSERT(err == RT_EOK);
     }
 }
 
@@ -418,6 +452,7 @@ static void LCD_WriteMultiplePixels(LCDC_HandleTypeDef *hlcdc, const uint8_t *RG
 
     Ori_XferCpltCallback = hlcdc->XferCpltCallback;
     hlcdc->XferCpltCallback = LCDC_SendLineCpltCbk;
+    tps_exit_sleep();
     StartFrame(hlcdc, 0);
 }
 
@@ -471,7 +506,7 @@ static void IdleModeOn(LCDC_HandleTypeDef *hlcdc)
 
 static void IdleModeOff(LCDC_HandleTypeDef *hlcdc)
 {
-    tps_exit_sleep();
+    /* The next refresh powers up the panel. */
 }
 
 static const LCD_DrvOpsDef lcd_drv_operations =

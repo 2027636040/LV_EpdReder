@@ -188,24 +188,22 @@ void tps_init(uint16_t vcom_voltage)
 
 rt_err_t tps_enter_sleep(void)
 {
-    rt_kprintf("[TPS] enter sleep: PWRCOM=0, PWRUP=0\n");
     rt_thread_mdelay(10);
     rt_pin_write(EPD_TPS_PWRCOM_PIN, 0);
     rt_thread_mdelay(10);
     rt_pin_write(EPD_TPS_PWRUP_PIN, 0);
-    rt_kprintf("[TPS] sleep done, WAKEUP=%d\n", rt_pin_read(EPD_TPS_WAKEUP_PIN));
+    /* Allow the configured rail sequence and the final 100 ms discharge to finish. */
+    rt_thread_mdelay(200);
 
     return RT_EOK;
 }
 
 rt_err_t tps_exit_sleep(void)
 {
-    rt_kprintf("[TPS] exit sleep: PWRUP=1, PWRCOM=1\n");
     rt_pin_write(EPD_TPS_PWRUP_PIN, 1);
     rt_thread_mdelay(50);
     rt_pin_write(EPD_TPS_PWRCOM_PIN, 1);
     rt_thread_mdelay(10);
-    rt_kprintf("[TPS] wake done, WAKEUP=%d\n", rt_pin_read(EPD_TPS_WAKEUP_PIN));
 
     return RT_EOK;
 }
