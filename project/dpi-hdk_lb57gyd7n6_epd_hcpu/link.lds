@@ -200,7 +200,8 @@ SECTIONS
     KEEP(*(.rodata.epub_ttf_data_size))
     KEEP(*(.SECTION_TTF_HEADER.*))
     KEEP(*(.SECTION_TTF.*))
-    KEEP(*(.weather_assets))
+    KEEP(*(.EPD_IMG_EZIP_HEADER*))
+    KEEP(*(.EPD_IMG_EZIP*))
 
   } > ROM2
 

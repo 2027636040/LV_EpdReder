@@ -22,6 +22,8 @@ extern const lv_image_dsc_t ui_icon_key3;
 extern const lv_image_dsc_t ui_icon_location;
 extern const lv_image_dsc_t ui_icon_humidity;
 extern const lv_image_dsc_t ui_icon_wind;
+extern const lv_image_dsc_t ui_icon_visibility;
+extern const lv_image_dsc_t ui_icon_cloud;
 extern const lv_image_dsc_t ui_icon_sunrise;
 extern const lv_image_dsc_t ui_icon_sunset;
 extern const lv_image_dsc_t ui_icon_pressure;

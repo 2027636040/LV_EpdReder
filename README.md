@@ -15,7 +15,7 @@
 | 存储 | TF 卡（FAT32，书籍直接放根目录）+ 内置 fs_root |
 
 ## 依赖
-- SiFli-SDK 子模块，基于 main 分支提交 `a25ebccdb986a98070287cf1701dc5adb10a265d`，包含 LVGL 缓存比较和 LodePNG 编译修复；使用本仓库记录的子模块提交，通过环境变量 `SIFLI_SDK` 指向 SDK 目录
+- SiFli-SDK 子模块，固定为 main 分支提交 `a25ebccdb986a98070287cf1701dc5adb10a265d`；通过环境变量 `SIFLI_SDK` 指向 SDK 目录
 - 屏幕驱动来源：OpenSiFli/EPD_Reader PR#39（E0470A03，含波形表）
 
 ## 构建
@@ -56,7 +56,9 @@ project\build_dpi-hdk_lb57gyd7n6_epd_hcpu\uart_download.bat
 │       ├── controls/              # 按键（KEY1/2/3）
 │       └── board_service.c/.h     # 文件系统和电源管理
 ├── assets/icons/                  # SVG 图标源文件
-├── tools/generate_ui_icons.cjs    # SVG → LVGL v9 A8 图标
+├── assets/ezip/                   # 固定尺寸透明 PNG，构建时转换为 EZIP
+├── assets/SConscript              # SDK EZIP 资源生成与编译
+├── tools/generate_ui_icons.cjs    # SVG → 灰阶透明 PNG
 ├── font/                          # 内置中文字体（DroidSansFallback，供 Tiny TTF）
 ├── waveform/                      # 打库波形 bin + 读取库
 ├── disk/                          # 内置文件系统镜像内容
@@ -114,7 +116,9 @@ Wi-Fi 服务通过 `ui_app_set_wifi(enabled, connected)` 上报状态；
 充电状态优先使用充电图标。负值或未知电量按 0% 处理。
 SF32LB57X 的电池采集接口目前返回占位值 0，因此默认显示空电池和 0%。
 
-图标直接使用编译进固件的 A8 灰度透明度数据，不依赖 TF 卡。
+图标使用编译进资源分区的 EZIP 压缩数据，通过 SDK 的 EZIP/EPIC 通路显示，不依赖 TF 卡。
+PNG 源图片在构建时转换；工程启用 `LV_USE_EZIP`，关闭 `LV_USE_LODEPNG`，
+当前不通过 LodePNG 读取文件系统中的原始 PNG。
 中文字体使用 Tiny TTF 从内置 `DroidSansFallback.ttf` 的只读 Flash 数据加载，
 字号为 20、24、28、36、64 像素，每个字号的字形缓存限制为 32 项；
 64 像素字体用于天气温度，20 像素字体用于详情标题和辅助信息。
@@ -141,8 +145,8 @@ KEY1/KEY3 移动焦点，KEY2 选中城市，点击“确认”后应用选择�
 
 `assets/weather/` 包含 SuperKey 中完整的 70 个天气 PNG。
 `ui_weather_icon()` 按和风天气代码查询，缺失代码回退到 `999`；
-160×160 大图及 48×48 小图均预转换为 16 灰阶 A8 数据，编译到资源分区。
-不需要运行时 PNG 解码、图像缩放或从 TF 卡加载。
+160×160 大图及 48×48 小图先生成近黑色 `#111111`、带 16 级边缘透明度的 PNG，再由 SDK 转换为 EZIP，
+编译到资源分区。不需要运行时 PNG 解码、图像缩放或从 TF 卡加载。
 
 ### 书架页面
 
@@ -200,8 +204,13 @@ KEY1/KEY3 选择设置行，KEY2 或触摸整行切换开关或循环到下一�
 
 图标源文件位于 `assets/icons/`；其中相册图标为配套的线性矢量图。
 安装 Node.js 的 `sharp` 模块后运行 `node tools/generate_ui_icons.cjs`，
-生成已纳入工程的 `src/ui/icons/ui_icons.c/.h`，普通固件构建无需重新生成。
-天气图标使用 `node tools/generate_weather_icons.cjs` 生成，来源与布局见 `assets/weather/README.md`。
+生成 `assets/ezip/icons/` 下的固定尺寸透明 PNG 和图标声明。
+天气图标使用 `node tools/generate_weather_icons.cjs` 生成 `assets/ezip/weather/` 中的
+大小两套 PNG 及天气代码查询表，来源与布局见 `assets/weather/README.md`。
+这些 PNG 输入文件随工程提供，普通固件构建不需要 Node.js；`assets/SConscript`
+使用 SDK 的 `Env.ImgResource()` 自动转换为 LVGL v9 EZIP 资源。
+SF32LB57X 使用 2 KiB 压缩窗口，生成的 C 文件与目标文件位于构建目录，
+图像数据及描述符放入现有 ROM2 资源分区。
 
 ## 开发规范
 - 屏幕分辨率宏：`LCD_HOR_RES_MAX=684`、`LCD_VER_RES_MAX=1216`（竖屏，与驱动旋转逻辑对应）

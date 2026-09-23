@@ -127,8 +127,7 @@ static lv_obj_t *icon_create(lv_obj_t *parent, const lv_image_dsc_t *src, int x,
     lv_obj_t *icon = lv_image_create(parent);
     epd_obj_init(icon);
     lv_image_set_src(icon, src);
-    lv_obj_set_style_image_recolor(icon, lv_color_hex(0x222222), 0);
-    lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
+    lv_obj_set_style_image_recolor_opa(icon, LV_OPA_TRANSP, 0);
     lv_obj_set_pos(icon, x, y);
     return icon;
 }
@@ -451,19 +450,14 @@ static void weather_create(lv_obj_t *screen)
         "湿度", "风速", "能见度", "云量", "日出", "日落", "气压", "空气"
     };
     static const lv_image_dsc_t *const metric_icons[] = {
-        &ui_icon_humidity, &ui_icon_wind, NULL, NULL,
+        &ui_icon_humidity, &ui_icon_wind, &ui_icon_visibility, &ui_icon_cloud,
         &ui_icon_sunrise, &ui_icon_sunset, &ui_icon_pressure, &ui_icon_air
     };
     for (unsigned i = 0; i < UI_WEATHER_METRIC_COUNT; ++i)
     {
         lv_obj_t *card = panel_create(screen, MARGIN + (i % 2) * 322,
                                       494 + (i / 2) * 84, 298, 72);
-        if (metric_icons[i]) icon_create(card, metric_icons[i], 16, 20);
-        else if (i == 3)
-        {
-            image = icon_create(card, ui_weather_icon(104, false), 8, 12);
-            lv_obj_set_style_image_recolor(image, lv_color_black(), 0);
-        }
+        icon_create(card, metric_icons[i], 16, 20);
         label_create(card, metric_names[i], 64, 7, 216, ui_font_caption());
         label_create(card, data->metrics[i], 64, 33, 216, ui_font_body());
     }

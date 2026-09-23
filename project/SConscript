@@ -16,5 +16,6 @@ objs.extend(SConscript(os.path.join(SIFLI_SDK, 'example/rom_bin/lcpu_general_ble
 objs.extend(SConscript(cwd+'/../src/SConscript', variant_dir="src", duplicate=0))
 # 字体自动转换
 objs.extend(SConscript(cwd+'/../font/SConscript', variant_dir="font", duplicate=0))
+objs.extend(SConscript(cwd+'/../assets/SConscript', variant_dir="assets", duplicate=0))
 
 Return('objs')

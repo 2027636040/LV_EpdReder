@@ -8,6 +8,10 @@ project/__pycache__/
 __pycache__/
 *.pyc
 
+# Host UI validation outputs
+tests/host/build/
+tests/host/*.ppm
+
 # IDE (local settings)
 .vscode/*.log
 

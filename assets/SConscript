@@ -1,0 +1,22 @@
+from building import *
+
+objs = []
+if GetDepend('EPD_USE_LVGL') and GetDepend('LV_USE_EZIP'):
+    images = Glob('ezip/icons/*.png') + Glob('ezip/weather/*.png')
+    if not images:
+        raise RuntimeError('EZIP inputs are missing; run the icon generation scripts.')
+
+    flags = '-rgb565' if GetConfigValue('LV_COLOR_DEPTH') == 16 else '-rgb888'
+    flags += ' -section EPD_IMG -lvgl_version 9 -cfile 2 -dpt 1'
+    if GetDepend('EZIP_PAL_SUPPORT'):
+        flags += ' -pal_support 1' if GetDepend('EZIP_PAL_SUPPORT_1') else ' -pal_support'
+    if GetDepend('SOC_SF32LB57X'):
+        flags += ' -chip sf57x'
+
+    objs = Env.ImgResource(images, flags)
+    Env.Depends(objs, Env.Value(flags))
+    if GetOption('no_cc'):
+        objs = []
+    objs = DefineGroup('epd_image_resources', objs, depend=['LV_USE_EZIP'])
+
+Return('objs')

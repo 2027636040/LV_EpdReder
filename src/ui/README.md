@@ -35,7 +35,7 @@
 - `ui_bookshelf_data.c`：真实书库快照与带校验的阅读记录。
 - `ui_reader.c`：分页、原文件偏移映射、索引缓存和断点续读。
 - `ui_settings.c`：设置项、默认值和当前选择。
-- `icons/`：内置 A8 图标。
+- `icons/`：EZIP 图标声明与天气代码查询表；图像由 `assets/SConscript` 转换并编译。
 - `SConscript`：本目录和 `icons/` 下的 `.c` 自动进入构建；
   需要额外头文件路径时在自身 `SConscript` 中追加 `CPPPATH`。
 
