@@ -392,6 +392,29 @@ void btpan_get_local_addr(char *buf, rt_size_t len)
 /*---------------------------------------------------------------------------*/
 /* 工作线程 */
 /*---------------------------------------------------------------------------*/
+static void btpan_stack_ready(void)
+{
+    char mac[18];
+    bd_addr_t addr;
+
+    g_pan.stack_ready = RT_TRUE;
+    LOG_I("BT/BLE stack and profile ready");
+
+    /* 写入自定义本机蓝牙 MAC（NVDS 持久化，重启后生效） */
+    memcpy(addr.addr, s_custom_bd_addr, sizeof(s_custom_bd_addr));
+    if (ble_nvds_update_address(&addr, BLE_UPDATE_ALWAYS, 1) != 0)
+        LOG_E("set custom bd addr failed");
+
+    btpan_get_local_addr(mac, sizeof(mac));
+    LOG_I("local bd addr: %s", mac);
+
+    if (g_pan.local_name[0] != '\0')
+        bt_interface_set_local_name(strlen(g_pan.local_name), g_pan.local_name);
+
+    bt_interface_set_scan_mode(g_pan.enabled, g_pan.enabled);
+    btpan_notify_state();
+}
+
 static void btpan_worker_entry(void *parameter)
 {
     rt_uint32_t value = 0;
@@ -401,33 +424,14 @@ static void btpan_worker_entry(void *parameter)
     /* 首次等待协议栈 ready，并在 ready 后设置本地蓝牙名称。 */
     if (RT_EOK == rt_mb_recv(g_pan.mailbox, &value, 8000) && value == PAN_MSG_STACK_READY)
     {
-        char mac[18];
-        bd_addr_t addr;
-
-        g_pan.stack_ready = RT_TRUE;
-        LOG_I("BT/BLE stack and profile ready");
-
-        /* 写入自定义本机蓝牙 MAC（NVDS 持久化，重启后生效） */
-        memcpy(addr.addr, s_custom_bd_addr, sizeof(s_custom_bd_addr));
-        if (ble_nvds_update_address(&addr, BLE_UPDATE_ALWAYS, 1) != 0)
-            LOG_E("set custom bd addr failed");
-
-        btpan_get_local_addr(mac, sizeof(mac));
-        LOG_I("local bd addr: %s", mac);
-
-        btpan_notify_state();
+        btpan_stack_ready();
     }
     else
     {
         LOG_I("BT/BLE stack and profile init failed");
     }
 
-    if (g_pan.local_name[0] != '\0')
-        bt_interface_set_local_name(strlen(g_pan.local_name), g_pan.local_name);
-
-    bt_interface_set_scan_mode(TRUE, TRUE);
-
-    /* 后续循环只处理业务事件。 */
+    /* 继续接收迟到的协议栈 ready 事件及后续业务事件。 */
     while (1)
     {
         if (rt_mb_recv(g_pan.mailbox, &value, RT_WAITING_FOREVER) != RT_EOK)
@@ -435,6 +439,10 @@ static void btpan_worker_entry(void *parameter)
 
         switch (value)
         {
+        case PAN_MSG_STACK_READY:
+            btpan_stack_ready();
+            break;
+
         case PAN_MSG_CONNECT_PAN:
             g_pan.connect_pending = RT_FALSE;
             if (g_pan.bt_connected)
