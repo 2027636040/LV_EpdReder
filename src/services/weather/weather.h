@@ -2,8 +2,8 @@
  * @file weather.h
  * @brief 天气数据服务 —— 对外接口（UI 调用）
  *
- * 数据源：心知天气（api.seniverse.com）
- * 网络链路：蓝牙 PAN（手机热点共享）→ HTTP → 解析 → 快照
+ * 数据源：和风天气 QWeather（WebAPI v7，HTTPS）
+ * 网络链路：蓝牙 PAN（手机热点共享）→ HTTPS → 解析 → 快照
  *
  * 用法（UI 侧）：
  *   1. 应用入口调用 weather_service_init() 一次；
@@ -43,7 +43,7 @@ typedef struct
 {
     char date[16];     /**< 日期文本，如 "09-23"（UI 可再转为“明天/后天”） */
     char text[24];     /**< 天气描述：多云 */
-    int  code;         /**< 天气代码（UI 映射图标） */
+    int  code;         /**< 图标代码（和风，UI 映射图标资源） */
     int  high;         /**< 最高温 ℃ */
     int  low;          /**< 最低温 ℃ */
     char wind_dir[16]; /**< 风向：东南 */
@@ -64,7 +64,7 @@ typedef struct
 
     /* ---- 当前天气（主区域） ---- */
     char text[24];  /**< 天气描述：多云 */
-    int  code;      /**< 天气代码（UI 映射图标） */
+    int  code;      /**< 和风天气图标代码（100=晴/305=小雨…，UI 映射图标） */
     int  temperature; /**< 当前温度 ℃ */
     int  feels_like;  /**< 体感温度 ℃（数据源未提供时等于 temperature） */
     int  high;        /**< 今日最高温 ℃ */
@@ -130,7 +130,7 @@ void weather_set_event_cb(weather_event_cb_t cb);
 typedef struct
 {
     const char *name; /**< 显示名：南京 */
-    const char *id;   /**< 数据源城市 ID：nanjing */
+    const char *id;   /**< 和风 LocationID：101190101 */
 } weather_city_t;
 
 /**
@@ -142,7 +142,7 @@ const weather_city_t *weather_get_city_list(int *count);
 
 /**
  * @brief 设置当前城市（下次刷新生效；城市选择页“确认”时调用）
- * @param city_id 数据源城市 ID（如 "nanjing"）
+ * @param city_id 和风 LocationID（如 "101010100"；`svc weather city` 可列出）
  * @return RT_EOK 成功；-RT_EINVAL 城市不支持
  */
 rt_err_t weather_set_city(const char *city_id);
