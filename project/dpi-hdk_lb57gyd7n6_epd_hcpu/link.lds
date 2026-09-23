@@ -196,9 +196,11 @@ SECTIONS
 
   .rom2 :
   {
-    *(.font_data)
+    KEEP(*(.font_data))
+    KEEP(*(.rodata.epub_ttf_data_size))
     KEEP(*(.SECTION_TTF_HEADER.*))
     KEEP(*(.SECTION_TTF.*))
+    KEEP(*(.weather_assets))
 
   } > ROM2
 

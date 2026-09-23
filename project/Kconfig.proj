@@ -8,12 +8,11 @@ config CUSTOM_MEM_MAP
 	default y    
 
 config EPD_USE_LVGL
-    bool "Use LVGL framework for EPD rendering (epd1 version)"
-    default n
+    bool "Use LVGL v9 for EPD rendering"
+    default y
     select PKG_USING_LITTLEVGL2RTT
     help
-        Enable LVGL framework for UI rendering instead of custom Renderer.
-        This is the epd1 version that uses LVGL widgets and display driver.
+        Initialize the LVGL v9 display port and run its timer handler.
 
 if EPD_USE_LVGL
 menu "app cache Memory configuration"
@@ -38,7 +37,41 @@ menu "app cache Memory configuration"
         help
             Move LVGL display buffers (buf1_1/buf1_2, ~100KB) from L1 SRAM bss to PSRAM.
             The freed L1 SRAM increases system heap (heap starts after __bss_end).
+
+    if LV_USE_TINY_TTF
+    choice
+        prompt "Tiny TTF glyph bitmap memory"
+        default TINY_TTF_CACHE_IN_PSRAM if BSP_USING_PSRAM
+        default TINY_TTF_CACHE_IN_SRAM
+
+        config TINY_TTF_CACHE_IN_PSRAM
+            bool "PSRAM (standalone)"
+            depends on BSP_USING_PSRAM
+
+        config TINY_TTF_CACHE_IN_SRAM_STANDALONE
+            bool "SRAM (standalone)"
+
+        config TINY_TTF_CACHE_IN_SRAM
+            bool "SRAM (shared system heap)"
+    endchoice
+
+    config TINY_TTF_CACHE_SIZE
+        int "Tiny TTF glyph bitmap heap size (bytes)"
+        depends on TINY_TTF_CACHE_IN_PSRAM || TINY_TTF_CACHE_IN_SRAM_STANDALONE
+        range 1024 16777216
+        default 262144 if TINY_TTF_CACHE_IN_PSRAM
+        default 80000 if TINY_TTF_CACHE_IN_SRAM_STANDALONE
+        help
+            Dedicated storage for glyph bitmaps used by the SDK font draw-buffer
+            callbacks. Font parsing and cache metadata use the LVGL allocator.
+    endif
 endmenu
+
+config LV_LOG_LEVEL
+    int "LVGL log level (0 trace, 1 info, 2 warning, 3 error, 4 user, 5 none)"
+    depends on LV_USE_LOG
+    range 0 5
+    default 2
 endif
 
 if !EPD_USE_LVGL

@@ -36,6 +36,20 @@ objs = PrepareBuilding(env)
 # Build application.
 DoBuilding(TARGET, objs)
 
+# Configuration macros can change public structure layouts, so every compiled
+# object must depend on rtconfig.h even when it is included through a macro.
+config_header = env.File(os.path.join(rtconfig.OUTPUT_DIR, 'rtconfig.h'))
+pending_nodes = list(env['target'])
+visited_nodes = set()
+while pending_nodes:
+    node = pending_nodes.pop()
+    if node in visited_nodes or not node.has_builder():
+        continue
+    visited_nodes.add(node)
+    if os.path.splitext(str(node))[1] in ('.o', '.obj'):
+        env.Depends(node, config_header)
+    pending_nodes.extend(node.sources)
+
 # Add flash table
 AddFTAB(SIFLI_SDK,rtconfig.CHIP)
 

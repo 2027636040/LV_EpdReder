@@ -113,7 +113,7 @@ bool net_ok = btpan_is_network_ready();
 
 ```c
 #include "bookshelf.h"
-#include "reader.h"
+#include "services/reader/reader.h"
 
 /* 书架：扫描并取列表 */
 int n = bookshelf_refresh();
@@ -160,4 +160,5 @@ svc reader seek <offset>     # 设置阅读位置
 - [ ] 空气质量（AQI）/ 日出日落等数据源扩展
 - [ ] 城市选择的持久化（FlashDB）
 - [ ] reader：BIG5 编码转换（GBK 已支持自动检测并转 UTF-8）
-- [ ] bookshelf / reader：阅读进度持久化（当前为内存状态）
+- [x] 阅读 UI：通过 `ui_bookshelf_data.c` 在 `/.epd_reader/` 保存原文件偏移、页码和进度；
+  `reader_set_position()` 本身只更新服务内存位置。
