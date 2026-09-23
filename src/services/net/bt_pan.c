@@ -367,7 +367,7 @@ static int btpan_bt_event_handle(uint16_t type, uint16_t event_id, uint8_t *data
  *---------------------------------------------------------------------------*/
 /* 自定义本机蓝牙 MAC（直接修改数组即可；显示顺序：下标 0 为显示首字节，
    即 02:4C:56:45:50:44） */
-static const uint8_t s_custom_bd_addr[6] = { 0x02, 0x4C, 0x56, 0x45, 0x50, 0x44 };
+static const uint8_t s_custom_bd_addr[6] = { 0x02, 0x42, 0x56, 0x45, 0x50, 0x44 };
 
 /* NVDS 地址写入接口（声明见 bf0_sibles_nvds.h；实现位于 service/common/bf0_bt_nvds.c） */
 extern uint8_t ble_nvds_update_address(bd_addr_t *addr, ble_common_update_type_t u_type, uint8_t is_flush);
