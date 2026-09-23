@@ -84,6 +84,13 @@ bool btpan_is_network_ready(void);
  */
 void btpan_set_event_cb(btpan_event_cb_t cb);
 
+/* ==================== 本机蓝牙 MAC 地址 ==================== */
+
+/**
+ * @brief 读取当前本机蓝牙 MAC 地址（格式化 "XX:XX:XX:XX:XX:XX"；buf 建议 ≥ 18 字节）
+ */
+void btpan_get_local_addr(char *buf, rt_size_t len);
+
 #ifdef __cplusplus
 }
 #endif

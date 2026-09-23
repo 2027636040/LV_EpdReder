@@ -23,6 +23,7 @@
 #include "ble_connection_manager.h"
 #include "bt_connection_manager.h"
 #include "ulog.h"
+#include "bf0_ble_common.h" /* bd_addr_t / ble_common_update_type_t / ble_get_public_address */
 
 /*---------------------------------------------------------------------------*/
 /* 配置常量 */
@@ -359,6 +360,36 @@ static int btpan_bt_event_handle(uint16_t type, uint16_t event_id, uint8_t *data
 }
 
 /*---------------------------------------------------------------------------*/
+/* 本机蓝牙 MAC 地址（NVDS 持久化，重启后生效）
+ *
+ * 开机协议栈就绪后将下面这组自定义地址写入 NVDS；
+ * 写入后需【重启设备】才会生效（协议栈启动时才重新读取）。
+ *---------------------------------------------------------------------------*/
+/* 自定义本机蓝牙 MAC（直接修改数组即可；显示顺序：下标 0 为显示首字节，
+   即 02:4C:56:45:50:44） */
+static const uint8_t s_custom_bd_addr[6] = { 0x02, 0x4C, 0x56, 0x45, 0x50, 0x44 };
+
+/* NVDS 地址写入接口（声明见 bf0_sibles_nvds.h；实现位于 service/common/bf0_bt_nvds.c） */
+extern uint8_t ble_nvds_update_address(bd_addr_t *addr, ble_common_update_type_t u_type, uint8_t is_flush);
+
+void btpan_get_local_addr(char *buf, rt_size_t len)
+{
+    bd_addr_t addr;
+
+    if (buf == RT_NULL || len < 18)
+        return;
+
+    buf[0] = '\0';
+
+    if (ble_get_public_address(&addr) != 0)
+        return;
+
+    rt_snprintf(buf, len, "%02X:%02X:%02X:%02X:%02X:%02X",
+                addr.addr[0], addr.addr[1], addr.addr[2],
+                addr.addr[3], addr.addr[4], addr.addr[5]);
+}
+
+/*---------------------------------------------------------------------------*/
 /* 工作线程 */
 /*---------------------------------------------------------------------------*/
 static void btpan_worker_entry(void *parameter)
@@ -370,8 +401,20 @@ static void btpan_worker_entry(void *parameter)
     /* 首次等待协议栈 ready，并在 ready 后设置本地蓝牙名称。 */
     if (RT_EOK == rt_mb_recv(g_pan.mailbox, &value, 8000) && value == PAN_MSG_STACK_READY)
     {
+        char mac[18];
+        bd_addr_t addr;
+
         g_pan.stack_ready = RT_TRUE;
         LOG_I("BT/BLE stack and profile ready");
+
+        /* 写入自定义本机蓝牙 MAC（NVDS 持久化，重启后生效） */
+        memcpy(addr.addr, s_custom_bd_addr, sizeof(s_custom_bd_addr));
+        if (ble_nvds_update_address(&addr, BLE_UPDATE_ALWAYS, 1) != 0)
+            LOG_E("set custom bd addr failed");
+
+        btpan_get_local_addr(mac, sizeof(mac));
+        LOG_I("local bd addr: %s", mac);
+
         btpan_notify_state();
     }
     else
