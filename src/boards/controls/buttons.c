@@ -16,6 +16,7 @@
 
 #include "board.h"
 #include "button.h"
+#include "drv_gpio.h"   /* GET_GPIO_INSTANCE / GET_GPIOx_PIN */
 
 #include <rtthread.h>
 #include <rtdevice.h>
@@ -57,6 +58,7 @@ static void dummy_button_event_handler(int32_t pin, button_action_t action)
 }
 
 #ifdef USING_ADC_BUTTON
+
 static void adc_button_handler(uint8_t group_idx, int32_t btn_idx, button_action_t button_action)
 {
     UIAction action = NONE;
@@ -96,6 +98,38 @@ static void adc_button_handler(uint8_t group_idx, int32_t btn_idx, button_action
         s_action_cb(action);
     }
 }
+
+static void fix_key_pin_pad(void)
+{
+    GPIO_TypeDef *gpio_instance = GET_GPIO_INSTANCE(BSP_KEY1_PIN);
+    int gpiox_pin = GET_GPIOx_PIN(BSP_KEY1_PIN);
+    pin_function func = GPIO_A0;
+    int pad;
+    int hcpu;
+
+    if (hwp_gpio1 == gpio_instance)
+    {
+        hcpu = 1;
+        pad = PAD_PA00 + gpiox_pin;
+        func = GPIO_A0 + gpiox_pin;
+    }
+#if GPIO2_BASE
+    else if (hwp_gpio2 == gpio_instance)
+    {
+        hcpu = 0;
+        pad = PAD_PB00 + gpiox_pin;
+        func = GPIO_B0 + gpiox_pin;
+    }
+#endif /* GPIO2_BASE */
+    else
+    {
+        LOG_E("key pin %d unsupported", (int)BSP_KEY1_PIN);
+        return;
+    }
+
+    HAL_PIN_Set(pad, func, PIN_NOPULL, hcpu);
+    HAL_PIN_SetMode(pad, hcpu, PIN_DIGITAL_IO_NORMAL);
+}
 #endif /* USING_ADC_BUTTON */
 
 void buttons_init(ActionCallback_t on_action)
@@ -113,6 +147,8 @@ void buttons_init(ActionCallback_t on_action)
         LOG_E("adc device \"%s\" not found, buttons disabled", ADC_BUTTON_ADC_DEV_NAME);
         return;
     }
+
+    fix_key_pin_pad();
 
     memset(&cfg, 0, sizeof(cfg));
     cfg.pin = BSP_KEY1_PIN;
