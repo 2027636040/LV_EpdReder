@@ -11,7 +11,7 @@
  *   svc                                  列出所有服务
  *   svc weather status                   打印当前天气快照
  *   svc weather refresh                  请求刷新（等待完成后打印）
- *   svc weather city [id]                查看/设置城市（beijing/shanghai/nanjing/...）
+ *   svc weather city [id]                查看/设置城市（和风 LocationID，如 101010100=北京）
  *   svc pan status|on|off|connect        蓝牙 PAN 状态与控制
  *   svc bookshelf list                   扫描并打印书库
  *   svc reader open <path>               打开书籍
@@ -45,11 +45,11 @@ static const char *weather_state_name(weather_state_t st)
 {
     switch (st)
     {
-    case WEATHER_STATE_IDLE:       return "IDLE";
-    case WEATHER_STATE_REFRESHING: return "REFRESHING";
-    case WEATHER_STATE_UPDATED:    return "UPDATED";
-    case WEATHER_STATE_CACHED:     return "CACHED";
-    case WEATHER_STATE_FAILED:     return "FAILED";
+    case WEATHER_STATE_IDLE:       return "空闲";
+    case WEATHER_STATE_REFRESHING: return "更新中";
+    case WEATHER_STATE_UPDATED:    return "已更新";
+    case WEATHER_STATE_CACHED:     return "缓存数据";
+    case WEATHER_STATE_FAILED:     return "失败";
     default:                       return "?";
     }
 }
@@ -77,24 +77,28 @@ static void print_weather_snapshot(void)
 
     weather_get_info(&w);
 
-    rt_kprintf("========== weather snapshot ==========\n");
-    rt_kprintf("valid   : %d\n", w.valid);
-    rt_kprintf("state   : %s\n", weather_state_name(w.state));
-    rt_kprintf("status  : %s\n", w.status);
-    rt_kprintf("city    : %s\n", w.city);
-    rt_kprintf("update  : %s\n", w.update_time);
-    rt_kprintf("now     : %s (code=%d) %dC  feels %dC  H:%d L:%d\n",
-               w.text, w.code, w.temperature, w.feels_like, w.high, w.low);
-    rt_kprintf("detail  : humidity %d%% | wind %s L%d %dkm/h | vis %dkm | press %dhPa | cloud %d%%\n",
+    rt_kprintf("========== 天气快照 ==========\n");
+    rt_kprintf("有效    : %s\n", w.valid ? "是" : "否");
+    rt_kprintf("状态    : %s\n", weather_state_name(w.state));
+    rt_kprintf("状态描述: %s\n", w.status);
+    rt_kprintf("城市    : %s\n", w.city);
+    rt_kprintf("更新时间: %s\n", w.update_time);
+    rt_kprintf("实况    : %s (%d) %d℃  体感 %d℃  今日 %d~%d℃\n",
+               w.text, w.code, w.temperature, w.feels_like, w.low, w.high);
+    rt_kprintf("详情    : 湿度 %d%% | %s %d级 %dkm/h | 能见度 %dkm | 气压 %dhPa | 云量 %d%%\n",
                w.humidity, w.wind_dir, w.wind_scale, w.wind_speed,
                w.visibility, w.pressure, w.cloud);
-    rt_kprintf("air     : aqi %d %s | sunrise %s | sunset %s\n",
-               w.aqi, w.aqi_category, w.sunrise, w.sunset);
+    if (w.aqi >= 0)
+        rt_kprintf("空气    : 空气质量 %d %s | 日出 %s | 日落 %s\n",
+                   w.aqi, w.aqi_category, w.sunrise, w.sunset);
+    else
+        rt_kprintf("空气    : 空气质量 -- | 日出 %s | 日落 %s\n",
+                   w.sunrise, w.sunset);
 
     for (i = 0; i < w.forecast_count; i++)
     {
         const weather_forecast_t *f = &w.forecast[i];
-        rt_kprintf("forecast%d: %s %s (code=%d) %d~%dC  wind %s L%d\n",
+        rt_kprintf("预报%d   : %s %s (%d) %d~%d℃  %s %d级\n",
                    i, f->date, f->text, f->code, f->low, f->high, f->wind_dir, f->wind_scale);
     }
     rt_kprintf("======================================\n");
@@ -435,7 +439,7 @@ static const svc_cmd_t weather_cmds[] =
 {
     { "status",  "print weather snapshot",           cmd_weather_status },
     { "refresh", "request refresh and wait result",  cmd_weather_refresh },
-    { "city",    "show/set city: city [id]",         cmd_weather_city },
+    { "city",    "show/set city: city [LocationID]",  cmd_weather_city },
 };
 
 static const svc_cmd_t pan_cmds[] =
