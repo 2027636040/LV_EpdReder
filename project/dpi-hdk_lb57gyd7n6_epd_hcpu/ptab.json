@@ -41,6 +41,12 @@
                 "tags": ["WEATHER_STORE"]
             },
             {
+                "offset": "0x001C0000",
+                "max_size": "0x00002000",
+                "name": "settings_store",
+                "tags": ["SETTINGS_STORE"]
+            },
+            {
                 "offset": "0x00200000", 
                 "max_size": "0x00200000", 
                 "tags": [

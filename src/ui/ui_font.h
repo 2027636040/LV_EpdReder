@@ -8,7 +8,8 @@ const lv_font_t *ui_font_body(void);
 const lv_font_t *ui_font_title(void);
 const lv_font_t *ui_font_caption(void);
 const lv_font_t *ui_font_temperature(void);
-lv_font_t *ui_font_reader_create(unsigned family, unsigned size, uint32_t *identity,
+lv_font_t *ui_font_reader_create(unsigned family, unsigned size, unsigned weight, uint32_t *identity,
                                 lv_font_t **fallback);
+void ui_font_reader_destroy(lv_font_t *font);
 
 #endif

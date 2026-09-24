@@ -19,6 +19,7 @@
 #include "pan_time.h"
 
 #include <string.h>
+#include <rthw.h>
 
 #include "bts2_app_inc.h"
 #include "ble_connection_manager.h"
@@ -46,6 +47,7 @@ typedef enum
 {
     PAN_MSG_STACK_READY = 1, /* 蓝牙协议栈初始化完成 */
     PAN_MSG_CONNECT_PAN = 2, /* 发起 PAN 连接（由定时器/外部请求触发） */
+    PAN_MSG_APPLY_ENABLED = 3, /* 在工作线程应用蓝牙开关 */
 } pan_msg_t;
 
 /*---------------------------------------------------------------------------*/
@@ -123,9 +125,7 @@ static rt_bool_t btpan_has_peer_addr(void)
 
 static void btpan_reset_mailbox(void)
 {
-    if (g_pan.mailbox != RT_NULL)
-        rt_mb_control(g_pan.mailbox, RT_IPC_CMD_RESET, RT_NULL);
-
+    /* Keep stack-ready and enable requests; queued connects recheck link state. */
     g_pan.connect_pending = RT_FALSE;
 }
 
@@ -153,12 +153,13 @@ static void btpan_connect_timeout(void *parameter)
 {
     (void)parameter;
 
-    if (g_pan.bt_connected)
+    if (g_pan.enabled && g_pan.bt_connected)
         btpan_request_connect();
 }
 
 static void btpan_start_timer(void)
 {
+    if (!g_pan.enabled) return;
     if (g_pan.pan_connect_timer == RT_NULL)
     {
         g_pan.pan_connect_timer = rt_timer_create("connect_pan",
@@ -220,6 +221,7 @@ static void btpan_stop_reconnect(void)
 
 static void btpan_start_reconnect(void)
 {
+    if (!g_pan.enabled) return;
     g_pan.reconnect_attempts = 0;
 
     if (g_pan.reconnect_timer == RT_NULL)
@@ -256,6 +258,15 @@ static int btpan_bt_event_handle(uint16_t type, uint16_t event_id, uint8_t *data
             btpan_post(PAN_MSG_STACK_READY);
             break;
 
+        case BT_NOTIFY_COMMON_ACL_CONNECTED:
+        {
+            bt_notify_device_acl_conn_info_t *info = (bt_notify_device_acl_conn_info_t *)data;
+            /* Reject a connection that completes after the switch was turned off. */
+            if (!g_pan.enabled && info && info->res == BTS2_SUCC)
+                bt_interface_disconnect_req(info->mac.addr);
+            break;
+        }
+
         case BT_NOTIFY_COMMON_ACL_DISCONNECTED:
         {
             bt_notify_device_base_info_t *info = (bt_notify_device_base_info_t *)data;
@@ -273,6 +284,11 @@ static int btpan_bt_event_handle(uint16_t type, uint16_t event_id, uint8_t *data
             {
                 bt_interface_set_scan_mode(TRUE, TRUE);
                 btpan_start_reconnect();
+            }
+            else if (!g_pan.enabled)
+            {
+                /* The connection manager may reopen scan after this callback. */
+                btpan_post(PAN_MSG_APPLY_ENABLED);
             }
 
             btpan_notify_state();
@@ -319,6 +335,11 @@ static int btpan_bt_event_handle(uint16_t type, uint16_t event_id, uint8_t *data
         /* 配对或加密完成后，启动延迟定时器发起 PAN 连接。 */
         if (should_connect_pan)
         {
+            if (!g_pan.enabled)
+            {
+                bt_interface_disconnect_req(g_pan.bd_addr.addr);
+                return 0;
+            }
             LOG_I("bd addr 0x%.2x:%.2x:%.2x:%.2x:%.2x:%.2x",
                   g_pan.bd_addr.addr[5], g_pan.bd_addr.addr[4],
                   g_pan.bd_addr.addr[3], g_pan.bd_addr.addr[2],
@@ -338,10 +359,19 @@ static int btpan_bt_event_handle(uint16_t type, uint16_t event_id, uint8_t *data
         switch (event_id)
         {
         case BT_NOTIFY_PAN_PROFILE_CONNECTED:
+            if (res != BTS2_SUCC || info == RT_NULL) break;
+            if (!g_pan.enabled)
+            {
+                bt_interface_disc_ext(info->mac.addr, BT_PROFILE_PAN);
+                bt_interface_disconnect_req(info->mac.addr);
+                break;
+            }
             LOG_I("pan connect successed (res=%d)", res);
             btpan_stop_timer();
             btpan_stop_reconnect();
             g_pan.connect_pending = RT_FALSE;
+            g_pan.bd_addr = info->mac;
+            g_pan.bt_connected = RT_TRUE;
             g_pan.pan_connected = RT_TRUE;
             btpan_notify_state();
             break;
@@ -394,6 +424,33 @@ void btpan_get_local_addr(char *buf, rt_size_t len)
 /*---------------------------------------------------------------------------*/
 /* 工作线程 */
 /*---------------------------------------------------------------------------*/
+static void btpan_apply_enabled(void)
+{
+#ifdef BSP_BT_CONNECTION_MANAGER
+    /* addFlag=0 replaces the target mask; it does not remove the given bits. */
+    bt_cm_set_profile_target(g_pan.enabled ? BT_CM_PAN : 0, BT_LINK_PHONE, g_pan.enabled ? 1 : 0);
+#endif
+    if (g_pan.stack_ready)
+        bt_interface_set_scan_mode(g_pan.enabled, g_pan.enabled);
+
+    if (!g_pan.enabled)
+    {
+        btpan_stop_timer();
+        btpan_stop_reconnect();
+        btpan_reset_mailbox();
+        if (g_pan.stack_ready && btpan_has_peer_addr() &&
+            (g_pan.bt_connected || g_pan.pan_connected))
+        {
+            if (g_pan.pan_connected)
+                bt_interface_disc_ext(g_pan.bd_addr.addr, BT_PROFILE_PAN);
+            bt_interface_disconnect_req(g_pan.bd_addr.addr);
+        }
+        g_pan.bt_connected = RT_FALSE;
+        g_pan.pan_connected = RT_FALSE;
+    }
+    btpan_notify_state();
+}
+
 static void btpan_stack_ready(void)
 {
     char mac[18];
@@ -413,8 +470,7 @@ static void btpan_stack_ready(void)
     if (g_pan.local_name[0] != '\0')
         bt_interface_set_local_name(strlen(g_pan.local_name), g_pan.local_name);
 
-    bt_interface_set_scan_mode(g_pan.enabled, g_pan.enabled);
-    btpan_notify_state();
+    btpan_apply_enabled();
 }
 
 static void btpan_worker_entry(void *parameter)
@@ -423,17 +479,7 @@ static void btpan_worker_entry(void *parameter)
 
     (void)parameter;
 
-    /* 首次等待协议栈 ready，并在 ready 后设置本地蓝牙名称。 */
-    if (RT_EOK == rt_mb_recv(g_pan.mailbox, &value, 8000) && value == PAN_MSG_STACK_READY)
-    {
-        btpan_stack_ready();
-    }
-    else
-    {
-        LOG_I("BT/BLE stack and profile init failed");
-    }
-
-    /* 继续接收迟到的协议栈 ready 事件及后续业务事件。 */
+    /* Settings can arrive before stack-ready during boot. */
     while (1)
     {
         if (rt_mb_recv(g_pan.mailbox, &value, RT_WAITING_FOREVER) != RT_EOK)
@@ -447,8 +493,12 @@ static void btpan_worker_entry(void *parameter)
 
         case PAN_MSG_CONNECT_PAN:
             g_pan.connect_pending = RT_FALSE;
-            if (g_pan.bt_connected)
+            if (g_pan.enabled && g_pan.stack_ready && g_pan.bt_connected)
                 bt_interface_conn_ext((char *)&g_pan.bd_addr, BT_PROFILE_PAN);
+            break;
+
+        case PAN_MSG_APPLY_ENABLED:
+            btpan_apply_enabled();
             break;
 
         default:
@@ -527,49 +577,23 @@ rt_err_t btpan_enable(bool enable)
     if (!g_pan.initialized)
         return -RT_ERROR;
 
+    rt_base_t level = rt_hw_interrupt_disable();
     if (!!enable == !!g_pan.enabled)
+    {
+        rt_hw_interrupt_enable(level);
         return RT_EOK;
-
-    if (enable)
-    {
-        g_pan.enabled = RT_TRUE;
-        if (g_pan.stack_ready)
-        {
-            if (g_pan.local_name[0] != '\0')
-                bt_interface_set_local_name(strlen(g_pan.local_name), g_pan.local_name);
-            bt_interface_set_scan_mode(TRUE, TRUE);
-        }
     }
-    else
-    {
-        g_pan.enabled = RT_FALSE;
-
-        if (g_pan.stack_ready)
-            bt_interface_set_scan_mode(FALSE, FALSE);
-
-        if (btpan_has_peer_addr())
-        {
-            if (g_pan.pan_connected)
-                bt_interface_disc_ext((unsigned char *)&g_pan.bd_addr, BT_PROFILE_PAN);
-
-            if (g_pan.bt_connected)
-                bt_interface_disconnect_req((unsigned char *)&g_pan.bd_addr);
-        }
-
-        g_pan.bt_connected = RT_FALSE;
-        g_pan.pan_connected = RT_FALSE;
-        btpan_reset_mailbox();
-        btpan_stop_timer();
-        btpan_stop_reconnect();
-    }
-
-    btpan_notify_state();
-    return RT_EOK;
+    rt_bool_t previous = g_pan.enabled;
+    g_pan.enabled = enable ? RT_TRUE : RT_FALSE;
+    rt_err_t result = btpan_post(PAN_MSG_APPLY_ENABLED);
+    if (result != RT_EOK) g_pan.enabled = previous;
+    rt_hw_interrupt_enable(level);
+    return result;
 }
 
 rt_err_t btpan_request_connect(void)
 {
-    if (!g_pan.initialized || !g_pan.bt_connected)
+    if (!g_pan.initialized || !g_pan.enabled || !g_pan.stack_ready || !g_pan.bt_connected)
         return -RT_ERROR;
 
     if (g_pan.pan_connected || g_pan.connect_pending)
@@ -587,7 +611,10 @@ rt_err_t btpan_request_connect(void)
 
 btpan_state_t btpan_get_state(void)
 {
-    return btpan_current_state();
+    rt_base_t level = rt_hw_interrupt_disable();
+    btpan_state_t state = btpan_current_state();
+    rt_hw_interrupt_enable(level);
+    return state;
 }
 
 bool btpan_is_ready(void)
@@ -597,12 +624,13 @@ bool btpan_is_ready(void)
 
 bool btpan_is_connected(void)
 {
-    return g_pan.bt_connected ? true : false;
+    btpan_state_t state = btpan_get_state();
+    return state == BTPAN_STATE_CONNECTED || state == BTPAN_STATE_NETWORK_READY;
 }
 
 bool btpan_is_network_ready(void)
 {
-    return g_pan.pan_connected ? true : false;
+    return btpan_get_state() == BTPAN_STATE_NETWORK_READY;
 }
 
 void btpan_set_event_cb(btpan_event_cb_t cb)

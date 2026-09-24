@@ -8,6 +8,78 @@ extern const unsigned int epub_ttf_data_size;
 
 static lv_font_t *fonts[5];
 
+typedef struct
+{
+    unsigned weight;
+    bool (*descriptor)(const lv_font_t *, lv_font_glyph_dsc_t *, uint32_t, uint32_t);
+    const void *(*bitmap)(lv_font_glyph_dsc_t *, lv_draw_buf_t *);
+} reader_weight_t;
+
+static bool weighted_descriptor(const lv_font_t *font, lv_font_glyph_dsc_t *glyph,
+                                uint32_t letter, uint32_t next)
+{
+    const reader_weight_t *style = font->user_data;
+    if (!style->descriptor(font, glyph, letter, next)) return false;
+    /* Reserve the extra ink width in both line measurement and drawing. */
+    if (style->weight == 1 && glyph->box_w > 1 && glyph->box_h > 1) ++glyph->adv_w;
+    return true;
+}
+
+static const void *weighted_bitmap(lv_font_glyph_dsc_t *glyph, lv_draw_buf_t *scratch)
+{
+    const reader_weight_t *style = glyph->resolved_font->user_data;
+    lv_draw_buf_t *buffer = (lv_draw_buf_t *)style->bitmap(glyph, scratch);
+    if (!buffer || (buffer->header.flags & LV_IMAGE_FLAGS_USER1) ||
+        buffer->header.cf != LV_COLOR_FORMAT_A8) return buffer;
+    /* Each reader font owns its Tiny TTF cache. Process each new bitmap once;
+     * never repeatedly embolden an already cached glyph. */
+    for (uint32_t y = 0; y < buffer->header.h; ++y)
+    {
+        uint8_t *row = buffer->data + y * buffer->header.stride;
+        uint8_t previous = 0;
+        for (uint32_t x = 0; x < buffer->header.w; ++x)
+        {
+            uint8_t current = row[x];
+            if (style->weight == 1)
+                row[x] = current > previous ? current : previous;
+            else
+            {
+                uint8_t next = x + 1 < buffer->header.w ? row[x + 1] : 0;
+                uint8_t edge = previous < next ? previous : next;
+                if (edge > current) edge = current;
+                /* Half-pixel horizontal erosion preserves one-pixel strokes. */
+                row[x] = ((unsigned)current + edge + 1) / 2;
+            }
+            previous = current;
+        }
+    }
+    buffer->header.flags |= LV_IMAGE_FLAGS_USER1;
+    /* Includes stride padding; the registered handler writes back PSRAM. */
+    lv_draw_buf_flush_cache(buffer, NULL);
+    return buffer;
+}
+
+static bool reader_weight_apply(lv_font_t *font, unsigned weight)
+{
+    if (!weight) return true;
+    reader_weight_t *style = lv_malloc(sizeof(*style));
+    if (!style) return false;
+    style->weight = weight;
+    style->descriptor = font->get_glyph_dsc;
+    style->bitmap = font->get_glyph_bitmap;
+    font->user_data = style;
+    font->get_glyph_dsc = weighted_descriptor;
+    font->get_glyph_bitmap = weighted_bitmap;
+    return true;
+}
+
+void ui_font_reader_destroy(lv_font_t *font)
+{
+    if (!font) return;
+    if (font->get_glyph_bitmap == weighted_bitmap) lv_free(font->user_data);
+    lv_tiny_ttf_destroy(font);
+}
+
 bool ui_font_init(void)
 {
     static const uint32_t sizes[] = {24, 28, 36, 20, 64};
@@ -42,14 +114,15 @@ const lv_font_t *ui_font_title(void) { return fonts[2]; }
 const lv_font_t *ui_font_caption(void) { return fonts[3]; }
 const lv_font_t *ui_font_temperature(void) { return fonts[4]; }
 
-lv_font_t *ui_font_reader_create(unsigned family, unsigned size, uint32_t *identity,
+lv_font_t *ui_font_reader_create(unsigned family, unsigned size, unsigned weight, uint32_t *identity,
                                 lv_font_t **fallback)
 {
     static const char *const paths[] = {NULL, "/fonts/Song.ttf", "/fonts/Hei.ttf",
                                         "/fonts/Kai.ttf", "/fonts/Monospace.ttf"};
     lv_font_t *font = NULL;
     *fallback = NULL;
-    *identity = size;
+    if (weight > 2) weight = 0;
+    *identity = size ^ (weight << 20);
     if (family > 0 && family < sizeof(paths) / sizeof(paths[0]))
     {
         struct stat st;
@@ -78,5 +151,12 @@ lv_font_t *ui_font_reader_create(unsigned family, unsigned size, uint32_t *ident
         *fallback = builtin;
     }
     else font = builtin;
+    if (!reader_weight_apply(font, weight) || (*fallback && !reader_weight_apply(*fallback, weight)))
+    {
+        ui_font_reader_destroy(font);
+        ui_font_reader_destroy(*fallback);
+        *fallback = NULL;
+        return NULL;
+    }
     return font;
 }

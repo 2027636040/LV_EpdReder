@@ -3,6 +3,7 @@
 #include "weather_store.h"
 #include "weather_http.h"
 #include "bt_pan.h"
+#include <rthw.h>
 #include <cJSON.h>
 #include <string.h>
 #include <stdlib.h>
@@ -14,6 +15,7 @@
 #include <rtdbg.h>
 
 #define UPDATE_INTERVAL_MS (30 * 60 * 1000)
+#define RETRY_INTERVAL_MS 5000u
 typedef struct
 {
     weather_job_t job;
@@ -27,8 +29,26 @@ static weather_config_t config;
 static weather_info_t info;
 static weather_result_t result;
 static uint32_t next_ticket;
+static uint32_t pan_generation;
 static bool refresh(const weather_config_t *cfg);
 static void publish(const weather_config_t *cfg, weather_info_t *data);
+
+static void pan_state_changed(btpan_state_t state)
+{
+    if (state != BTPAN_STATE_NETWORK_READY) return;
+    /* Record reconnects even while the weather worker is inside an HTTP request. */
+    rt_base_t level = rt_hw_interrupt_disable();
+    ++pan_generation;
+    rt_hw_interrupt_enable(level);
+}
+
+static uint32_t pan_generation_get(void)
+{
+    rt_base_t level = rt_hw_interrupt_disable();
+    uint32_t generation = pan_generation;
+    rt_hw_interrupt_enable(level);
+    return generation;
+}
 
 static void empty_info(weather_info_t *out, const weather_config_t *cfg)
 {
@@ -88,6 +108,11 @@ static cJSON *get_json(const weather_config_t *cfg, const char *path)
     cJSON *root = RT_NULL;
     for (unsigned attempt = 0; attempt < 2; ++attempt)
     {
+        if (!weather_network_ready())
+        {
+            LOG_W("stage=network PAN/IP not ready");
+            break;
+        }
         int http_status;
         char *json = weather_http_get(cfg, path, &http_status);
         if (json)
@@ -111,7 +136,7 @@ static cJSON *get_json(const weather_config_t *cfg, const char *path)
         }
         LOG_W("request failed: HTTP %d, attempt %u", http_status, attempt + 1);
         if (http_status >= 400 && http_status < 500) break;
-        if (attempt == 0) rt_thread_mdelay(1000);
+        if (attempt == 0) rt_thread_mdelay(RETRY_INTERVAL_MS);
     }
     return root;
 }
@@ -232,7 +257,7 @@ finish:
     return ok;
 }
 
-static bool run_request(const weather_request_t *request, bool *initial_sync)
+static bool run_request(const weather_request_t *request)
 {
     weather_config_t candidate;
     weather_info_t snapshot;
@@ -244,7 +269,6 @@ static bool run_request(const weather_request_t *request, bool *initial_sync)
     if (request->job == WEATHER_JOB_SYNC)
     {
         ok = refresh(&candidate);
-        *initial_sync = false;
         if (ok) rt_snprintf(message, sizeof(message), "同步成功");
     }
     else if (request->job == WEATHER_JOB_IMPORT)
@@ -258,7 +282,6 @@ static bool run_request(const weather_request_t *request, bool *initial_sync)
                 config = candidate;
                 rt_mutex_release(lock);
                 rt_snprintf(message, sizeof(message), "配置导入成功");
-                *initial_sync = true;
             }
             else rt_snprintf(message, sizeof(message), "配置保存失败，请重试");
         }
@@ -290,7 +313,6 @@ static bool run_request(const weather_request_t *request, bool *initial_sync)
                 const char *suffix = length >= 3 ? candidate.city + length - 3 : "";
                 bool has_suffix = !strcmp(suffix, "市") || !strcmp(suffix, "区") || !strcmp(suffix, "县");
                 rt_snprintf(message, sizeof(message), "%s%s，设置成功", candidate.city, has_suffix ? "" : "市");
-                *initial_sync = true;
             }
             else
             {
@@ -311,30 +333,69 @@ static bool run_request(const weather_request_t *request, bool *initial_sync)
 static void worker_entry(void *parameter)
 {
     rt_tick_t interval = rt_tick_from_millisecond(UPDATE_INTERVAL_MS);
+    rt_tick_t retry_interval = rt_tick_from_millisecond(RETRY_INTERVAL_MS);
     rt_tick_t last_period = rt_tick_get();
-    bool initial_sync = true;
+    rt_tick_t failed_at = 0;
+    uint32_t generation = pan_generation_get();
+    bool sync_pending = true;
+    bool retry_wait = false;
+    bool network_was_ready = false;
     (void)parameter;
     for (;;)
     {
         weather_request_t request;
-        bool manual_sync = false;
-        if (rt_mq_recv(requests, &request, sizeof(request), rt_tick_from_millisecond(1000)) == RT_EOK)
+        bool have_request = rt_mq_recv(requests, &request, sizeof(request),
+                                       rt_tick_from_millisecond(1000)) == RT_EOK;
+        bool network_ready = weather_network_ready();
+        uint32_t current_generation = pan_generation_get();
+        if (current_generation != generation || (network_ready && !network_was_ready))
         {
-            run_request(&request, &initial_sync);
-            manual_sync = request.job == WEATHER_JOB_SYNC;
+            sync_pending = true;
+            generation = current_generation;
         }
+        network_was_ready = network_ready;
+
+        bool manual_sync = have_request && request.job == WEATHER_JOB_SYNC;
+        if (have_request)
+        {
+            bool ok = run_request(&request);
+            if (manual_sync)
+            {
+                sync_pending = !ok;
+                retry_wait = !ok;
+                failed_at = rt_tick_get();
+                if (ok) network_was_ready = true;
+            }
+            else if (ok)
+            {
+                /* Imported credentials or a verified city need fresh weather. */
+                sync_pending = true;
+                retry_wait = false;
+            }
+        }
+
         rt_tick_t now = rt_tick_get();
         bool due = (rt_tick_t)(now - last_period) >= interval;
-        if (due) last_period += ((rt_tick_t)(now - last_period) / interval) * interval;
+        if (due)
+        {
+            last_period += ((rt_tick_t)(now - last_period) / interval) * interval;
+            if (!manual_sync) sync_pending = true;
+        }
+        /* Keep pending work while offline; an expired period is not a completed sync. */
+        if (have_request || !sync_pending || !network_ready) continue;
+        if (retry_wait && (rt_tick_t)(now - failed_at) < retry_interval) continue;
         weather_config_t current;
         weather_get_config(&current);
-        if (weather_config_valid(&current) && digits(current.city_id) &&
-            ((due && !manual_sync) || (initial_sync && btpan_is_connected())))
-        {
-            /* Silent jobs never modify the foreground operation/result ticket. */
-            refresh(&current);
-            initial_sync = false;
-        }
+        if (!weather_config_valid(&current) || !digits(current.city_id)) continue;
+
+        /* Silent jobs never modify the foreground operation/result ticket. */
+        LOG_I("automatic sync start");
+        bool ok = refresh(&current);
+        sync_pending = !ok;
+        retry_wait = !ok;
+        failed_at = rt_tick_get();
+        if (ok) LOG_I("automatic sync complete");
+        else LOG_W("automatic sync pending; retry in %u ms when online", RETRY_INTERVAL_MS);
     }
 }
 
@@ -363,8 +424,9 @@ rt_err_t weather_service_init(void)
         lock = RT_NULL;
         return -RT_ENOMEM;
     }
+    btpan_set_event_cb(pan_state_changed);
     rt_thread_startup(worker);
-    LOG_I("weather service ready; interval=30min, cache=%d", info.valid);
+    LOG_I("weather service ready; interval=30min, retry=5s, cache=%d", info.valid);
     return RT_EOK;
 }
 

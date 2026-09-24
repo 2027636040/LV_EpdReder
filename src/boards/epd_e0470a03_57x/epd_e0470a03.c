@@ -33,6 +33,7 @@ enum EpdRotation
 /* Panel native (TCON output) resolution */
 #define EPD_PANEL_HOR 1216
 #define EPD_PANEL_VER 684
+#define EPD_POWER_OFF_IDLE_MS 300
 
 #if (EPD_PANEL_HOR == LCD_VER_RES_MAX) && (EPD_PANEL_VER == LCD_HOR_RES_MAX)
     #define DISPLAY_ROTATE EPD_ROT_INVERTED_PORTRAIT
@@ -83,8 +84,15 @@ static LCDC_InitTypeDef lcdc_int_cfg;
 static void  LCD_WriteReg(LCDC_HandleTypeDef *hlcdc, uint16_t LCD_Reg, uint8_t *Parameters, uint32_t NbParameters);
 static uint32_t LCD_ReadData(LCDC_HandleTypeDef *hlcdc, uint16_t RegValue, uint8_t ReadSize);
 static void epd_poweroff_entry(void *parameter);
+static void epd_power_off_locked(void);
+static void epd_power_off(void);
 static struct rt_semaphore epd_refresh_done;
+static struct rt_mutex epd_power_lock;
 static rt_thread_t epd_poweroff_thread;
+static rt_bool_t epd_panel_powered;
+/* The completion ISR publishes these together; power transitions use the mutex. */
+static volatile rt_bool_t epd_refresh_active;
+static volatile rt_tick_t epd_idle_since;
 
 
 
@@ -103,17 +111,24 @@ static rt_thread_t epd_poweroff_thread;
 static void LCD_Init(LCDC_HandleTypeDef *hlcdc)
 {
     uint8_t parameter[32];
+    rt_err_t err;
 
     if (epd_poweroff_thread == RT_NULL)
     {
-        rt_err_t err = rt_sem_init(&epd_refresh_done, "epd_done", 0, RT_IPC_FLAG_FIFO);
+        err = rt_mutex_init(&epd_power_lock, "epd_pwr", RT_IPC_FLAG_PRIO);
         RT_ASSERT(err == RT_EOK);
-        epd_poweroff_thread = rt_thread_create("epd_off", epd_poweroff_entry, hlcdc,
+        err = rt_sem_init(&epd_refresh_done, "epd_done", 0, RT_IPC_FLAG_FIFO);
+        RT_ASSERT(err == RT_EOK);
+        epd_poweroff_thread = rt_thread_create("epd_off", epd_poweroff_entry, RT_NULL,
                                               1024, RT_THREAD_PRIORITY_MAX / 2, 10);
         RT_ASSERT(epd_poweroff_thread != RT_NULL);
         err = rt_thread_startup(epd_poweroff_thread);
         RT_ASSERT(err == RT_EOK);
     }
+
+    err = rt_mutex_take(&epd_power_lock, RT_WAITING_FOREVER);
+    RT_ASSERT(err == RT_EOK);
+    epd_power_off_locked();
 
     memcpy(&lcdc_int_cfg, &lcdc_int_cfg_edp_16bit, sizeof(lcdc_int_cfg));
     memcpy(&hlcdc->Init, &lcdc_int_cfg, sizeof(LCDC_InitTypeDef));
@@ -138,6 +153,7 @@ static void LCD_Init(LCDC_HandleTypeDef *hlcdc)
 #else
     tps_init(1000); //-1.00V
 #endif
+    rt_mutex_release(&epd_power_lock);
 }
 
 
@@ -168,7 +184,7 @@ static void LCD_DisplayOn(LCDC_HandleTypeDef *hlcdc)
   */
 static void LCD_DisplayOff(LCDC_HandleTypeDef *hlcdc)
 {
-    /* Display Off */
+    epd_power_off();
 }
 
 static void LCD_SetRegion(LCDC_HandleTypeDef *hlcdc, uint16_t Xpos0, uint16_t Ypos0, uint16_t Xpos1, uint16_t Ypos1)
@@ -374,26 +390,67 @@ L1_RET_CODE_SECT(epd_codes, static void CopyToMixedGrayBuffer(LCDC_HandleTypeDef
 static void (* Ori_XferCpltCallback)(struct __LCDC_HandleTypeDef *lcdc);
 static uint32_t start_tick;
 static uint32_t total_frames; //Total frames need to do
-static uint32_t curr_frame; //Current flushing frame index
+static uint32_t curr_frame; //Next waveform frame index to send
 static HAL_LCDC_PixelFormat ori_format;
 static uint32_t lut[HAL_LCDC_LOOKUP_TABLE_SIZE >> 2];
 
+static void epd_power_off_locked(void)
+{
+    RT_ASSERT(!epd_refresh_active);
+    if (epd_panel_powered)
+    {
+        /* Keep the lock through rail discharge before allowing another power-up. */
+        tps_enter_sleep();
+        epd_panel_powered = RT_FALSE;
+    }
+}
+
+static void epd_power_off(void)
+{
+    rt_err_t err = rt_mutex_take(&epd_power_lock, RT_WAITING_FOREVER);
+    RT_ASSERT(err == RT_EOK);
+    epd_power_off_locked();
+    rt_mutex_release(&epd_power_lock);
+}
+
 static void epd_poweroff_entry(void *parameter)
 {
-    LCDC_HandleTypeDef *hlcdc = (LCDC_HandleTypeDef *)parameter;
+    const rt_tick_t idle_ticks = rt_tick_from_millisecond(EPD_POWER_OFF_IDLE_MS);
+    (void)parameter;
 
     while (1)
     {
         rt_err_t err = rt_sem_take(&epd_refresh_done, RT_WAITING_FOREVER);
         RT_ASSERT(err == RT_EOK);
 
-        /* Keep the LCD task waiting until the panel has finished powering down. */
-        tps_enter_sleep();
-        void (*callback)(struct __LCDC_HandleTypeDef *) = Ori_XferCpltCallback;
-        Ori_XferCpltCallback = NULL;
-        if (callback)
+        while (1)
         {
-            callback(hlcdc);
+            err = rt_mutex_take(&epd_power_lock, RT_WAITING_FOREVER);
+            RT_ASSERT(err == RT_EOK);
+
+            rt_base_t level = rt_hw_interrupt_disable();
+            rt_bool_t active = epd_refresh_active;
+            rt_tick_t idle_since = epd_idle_since;
+            rt_hw_interrupt_enable(level);
+
+            if (!epd_panel_powered || active)
+            {
+                rt_mutex_release(&epd_power_lock);
+                break;
+            }
+
+            rt_tick_t elapsed = rt_tick_get() - idle_since;
+            if (elapsed >= idle_ticks)
+            {
+                epd_power_off_locked();
+                rt_mutex_release(&epd_power_lock);
+                break;
+            }
+
+            rt_mutex_release(&epd_power_lock);
+            /* Recheck the newest completion time after either a wakeup or timeout. */
+            err = rt_sem_take(&epd_refresh_done, (rt_int32_t)(idle_ticks - elapsed));
+            RT_ASSERT(err == RT_EOK || err == -RT_ETIMEOUT);
         }
     }
 }
@@ -425,15 +482,37 @@ static void LCDC_SendLineCpltCbk(LCDC_HandleTypeDef *hlcdc)
         LOG_I("Take %d ticks", rt_tick_get() - start_tick);
 
         HAL_LCDC_LayerSetFormat(hlcdc, HAL_LCDC_LAYER_DEFAULT, ori_format); //Restore layer format
-        /* The TPS power-down sequence sleeps, so defer it out of the ISR. */
+        void (*callback)(struct __LCDC_HandleTypeDef *) = Ori_XferCpltCallback;
+        Ori_XferCpltCallback = NULL;
+        /* The SDK callback checks and clears this pointer before releasing draw_sem. */
+        hlcdc->XferCpltCallback = callback;
+
+        rt_base_t level = rt_hw_interrupt_disable();
+        epd_idle_since = rt_tick_get();
+        epd_refresh_active = RT_FALSE;
+        rt_hw_interrupt_enable(level);
+
         rt_err_t err = rt_sem_release(&epd_refresh_done);
         RT_ASSERT(err == RT_EOK);
+        if (callback)
+        {
+            callback(hlcdc);
+        }
     }
 }
 
 static void LCD_WriteMultiplePixels(LCDC_HandleTypeDef *hlcdc, const uint8_t *RGBCode, uint16_t Xpos0, uint16_t Ypos0, uint16_t Xpos1, uint16_t Ypos1)
 {
     start_tick = rt_tick_get();
+    rt_err_t err = rt_mutex_take(&epd_power_lock, RT_WAITING_FOREVER);
+    RT_ASSERT(err == RT_EOK);
+    RT_ASSERT(!epd_refresh_active);
+    /* Reserve the panel before conversion so an old idle timeout cannot power it off. */
+    rt_base_t level = rt_hw_interrupt_disable();
+    epd_refresh_active = RT_TRUE;
+    rt_hw_interrupt_enable(level);
+    rt_mutex_release(&epd_power_lock);
+
     ori_format = hlcdc->Layer[HAL_LCDC_LAYER_DEFAULT].data_format;
 
     LOG_I("LCD_WriteMultiplePixels %d pixels to %d, %d", (Xpos1 - Xpos0) * (Ypos1 - Ypos0), Xpos0, Ypos0);
@@ -452,8 +531,15 @@ static void LCD_WriteMultiplePixels(LCDC_HandleTypeDef *hlcdc, const uint8_t *RG
 
     Ori_XferCpltCallback = hlcdc->XferCpltCallback;
     hlcdc->XferCpltCallback = LCDC_SendLineCpltCbk;
-    tps_exit_sleep();
-    StartFrame(hlcdc, 0);
+    err = rt_mutex_take(&epd_power_lock, RT_WAITING_FOREVER);
+    RT_ASSERT(err == RT_EOK);
+    if (!epd_panel_powered)
+    {
+        tps_exit_sleep();
+        epd_panel_powered = RT_TRUE;
+    }
+    rt_mutex_release(&epd_power_lock);
+    StartFrame(hlcdc, curr_frame++);
 }
 
 
@@ -501,7 +587,7 @@ static void LCD_SetBrightness(LCDC_HandleTypeDef *hlcdc, uint8_t br)
 
 static void IdleModeOn(LCDC_HandleTypeDef *hlcdc)
 {
-    tps_enter_sleep();
+    epd_power_off();
 }
 
 static void IdleModeOff(LCDC_HandleTypeDef *hlcdc)

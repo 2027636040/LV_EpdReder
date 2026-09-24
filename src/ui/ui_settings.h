@@ -32,7 +32,9 @@ typedef struct
 const ui_setting_t *ui_settings_item(ui_setting_id_t id);
 const char *ui_settings_value(ui_setting_id_t id);
 bool ui_settings_enabled(ui_setting_id_t id);
-void ui_settings_cycle(ui_setting_id_t id);
+void ui_settings_init(void);
+bool ui_settings_cycle(ui_setting_id_t id);
+bool ui_settings_save(void);
 unsigned ui_settings_index(ui_setting_id_t id);
 unsigned ui_settings_refresh_count(void);
 

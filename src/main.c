@@ -8,6 +8,7 @@
 #include "lvgl.h"
 #include "src/draw/lv_draw_buf_private.h"
 #include "ui/ui_app.h"
+#include "ui/ui_settings.h"
 #include "bt_pan.h"
 #include "weather.h"
 #include "bookshelf.h"
@@ -70,6 +71,7 @@ int main(void)
 
     ret = btpan_init("RT-EPD-Reader");
     if (ret != RT_EOK) LOG_W("btpan init failed: %d", ret);
+    ui_settings_init();
     ret = weather_service_init();
     if (ret != RT_EOK) LOG_W("weather init failed: %d", ret);
     ret = bookshelf_service_init();

@@ -62,6 +62,7 @@ typedef struct
     lv_obj_t *value;
     lv_obj_t *track;
     lv_obj_t *knob;
+    bool rendered, enabled;
 } setting_view_t;
 
 static ui_nav_t navigation;
@@ -93,8 +94,10 @@ static lv_obj_t *popup_previous_focus;
 static unsigned bookshelf_first;
 static setting_view_t setting_views[UI_SETTING_COUNT];
 static lv_obj_t *reader_body, *reader_footer, *reader_progress, *reader_panel;
+static lv_obj_t *reader_battery, *reader_clock;
 static lv_obj_t *reader_option_label, *reader_jump_label;
 static uint32_t reader_revision;
+static unsigned reader_rendered_pages;
 static unsigned reader_jump, reader_option;
 static unsigned reader_panel_focus_start;
 static bool reader_session, reader_settings_dirty, reader_return_panel;
@@ -255,7 +258,7 @@ static void status_render(void)
     };
     if (view.battery)
         image_update(view.battery, batteries[ui_battery_icon(status.battery_percent, status.charging)]);
-    int right = radio_update(view.bluetooth, status.bluetooth, WIDTH - MARGIN - (view.battery ? 116 : 0),
+    int right = radio_update(view.bluetooth, status.bluetooth, WIDTH - MARGIN - (view.battery ? 140 : 0),
                               &ui_icon_bt_on, &ui_icon_bt_disconnected);
     radio_update(view.wifi, status.wifi, right, &ui_icon_wifi_on, &ui_icon_wifi_disconnected);
     if (view.recent)
@@ -278,6 +281,7 @@ void launcher_set_status(const launcher_status_t *new_status)
 {
     status = *new_status;
     status.time_text[sizeof(status.time_text) - 1] = '\0';
+    status.clock_text[sizeof(status.clock_text) - 1] = '\0';
     status.recent_book[sizeof(status.recent_book) - 1] = '\0';
     status.weather[sizeof(status.weather) - 1] = '\0';
     if (initialized) status_render();
@@ -285,13 +289,15 @@ void launcher_set_status(const launcher_status_t *new_status)
 
 static void header_create(lv_obj_t *screen, bool show_battery)
 {
-    view.time = label_create(screen, "", MARGIN, 25, 322, ui_font_small());
+    const lv_font_t *font = ui_font_body();
+    int text_y = (74 - font->line_height) / 2;
+    view.time = label_create(screen, "", MARGIN, text_y, 380, font);
     view.bluetooth = icon_create(screen, &ui_icon_bt_disconnected, 0, 22);
     view.wifi = icon_create(screen, &ui_icon_wifi_disconnected, 0, 22);
     if (show_battery)
     {
-        view.battery = icon_create(screen, &ui_icon_battery_empty, WIDTH - MARGIN - 104, 18);
-        view.percent = label_create(screen, "", WIDTH - MARGIN - 60, 25, 62, ui_font_small());
+        view.battery = icon_create(screen, &ui_icon_battery_empty, WIDTH - MARGIN - 128, 18);
+        view.percent = label_create(screen, "", WIDTH - MARGIN - 80, text_y, 80, font);
         lv_obj_set_style_text_align(view.percent, LV_TEXT_ALIGN_RIGHT, 0);
     }
     lv_obj_t *line = panel_create(screen, MARGIN, 74, CONTENT_WIDTH, 1);
@@ -432,6 +438,11 @@ static void bookshelf_create(lv_obj_t *screen)
                           bookshelf_first + BOOKSHELF_PAGE_SIZE < count);
 }
 
+static void weather_data_update(void)
+{
+    if (ui_weather_process()) ui_app_set_weather_summary(ui_weather_view()->summary);
+}
+
 static void weather_time_update(void)
 {
     const ui_weather_view_t *data = ui_weather_view();
@@ -463,7 +474,7 @@ static void weather_time_update(void)
 
 static void weather_create(lv_obj_t *screen)
 {
-    ui_weather_process();
+    weather_data_update();
     const ui_weather_view_t *data = ui_weather_view();
     icon_create(screen, &ui_icon_location, PAGE_TITLE_X, 106);
     weather_widgets.city = label_create(screen, data->city, PAGE_TITLE_X + 44, 101, 272, ui_font_title());
@@ -614,9 +625,12 @@ static void setting_render(ui_setting_id_t id)
     if (setting->track)
     {
         bool enabled = ui_settings_enabled(id);
+        if (setting->rendered && setting->enabled == enabled) return;
         lv_obj_set_style_bg_color(setting->track,
                                   lv_color_hex(enabled ? 0x555555 : 0xBBBBBB), 0);
         lv_obj_set_x(setting->knob, enabled ? 40 : 4);
+        setting->enabled = enabled;
+        setting->rendered = true;
     }
     else
         text_update(setting->value, ui_settings_value(id));
@@ -674,6 +688,7 @@ static void text_settings_create(lv_obj_t *screen)
     page_title_create(screen, "文本设置", ui_font_title());
     for (unsigned i = UI_SETTING_FONT; i < UI_SETTING_COUNT; ++i)
         setting_row_create(screen, (ui_setting_id_t)i, 174 + (i - UI_SETTING_FONT) * 132, 110);
+    button_create(screen, MARGIN, HEIGHT - MARGIN - 70, CONTENT_WIDTH, 70, "保存设置", SETTINGS_SAVE);
 }
 
 static void popup_close(void)
@@ -719,33 +734,64 @@ static void placeholder_create(lv_obj_t *screen, ui_page_id_t page)
     lv_obj_set_style_text_align(tip, LV_TEXT_ALIGN_CENTER, 0);
 }
 
+static void reader_status_render(void)
+{
+    /* Update with reader operations, never from the periodic status poll. */
+    char text[32];
+    snprintf(text, sizeof(text), "电量：%d%%", ui_battery_percent(status.battery_percent));
+    text_update(reader_battery, text);
+    text_update(reader_clock, status.clock_text[0] ? status.clock_text : "--:--");
+}
+
+static void reader_footer_render(void)
+{
+    const ui_reader_view_t *reading = ui_reader_view();
+    if (!reader_footer) return;
+    char text[196];
+    if (reading->error[0]) text_update(reader_footer, reading->error);
+    else if (!reading->ready) text_update(reader_footer, "");
+    else
+    {
+        if (!reading->saved)
+            snprintf(text, sizeof(text), "进度未保存 · %u 页", reading->page);
+        else if (reading->pages)
+            snprintf(text, sizeof(text), "%u / %u 页 · %u%%", reading->page, reading->pages,
+                     reading->percent);
+        else
+            snprintf(text, sizeof(text), "%u / -- 页 · %u%%", reading->page, reading->percent);
+        text_update(reader_footer, text);
+    }
+    reader_rendered_pages = reading->pages;
+}
+
 static void reader_render(void)
 {
     const ui_reader_view_t *reading = ui_reader_view();
     if (!reader_body) return;
-    char text[196];
-    if (reading->error[0]) text_update(reader_footer, reading->error);
-    else if (!reading->ready)
-    {
+    reader_status_render();
+    if (!reading->error[0] && !reading->ready)
         text_update(reader_body, "正在排版，请稍候…");
-        text_update(reader_footer, "");
-    }
-    else
+    else if (!reading->error[0])
     {
         text_update(reader_body, reading->text[0] ? reading->text : "本书暂无正文");
-        if (reading->pages)
-            snprintf(text, sizeof(text), "%u / %u 页 · %u%%%s", reading->page, reading->pages,
-                     reading->percent, reading->saved ? "" : " · 未能保存进度");
-        else
-            snprintf(text, sizeof(text), "%u / -- 页 · %u%%%s", reading->page, reading->percent,
-                     reading->saved ? "" : " · 未能保存进度");
-        text_update(reader_footer, text);
         int width = CONTENT_WIDTH * reading->percent / 100;
         if (width) lv_obj_remove_flag(reader_progress, LV_OBJ_FLAG_HIDDEN);
         else lv_obj_add_flag(reader_progress, LV_OBJ_FLAG_HIDDEN);
         if (lv_obj_get_width(reader_progress) != width) lv_obj_set_width(reader_progress, width);
     }
+    reader_footer_render();
     reader_revision = reading->revision;
+}
+
+static void reader_update(void)
+{
+    const ui_reader_view_t *reading = ui_reader_view();
+    if (reading->revision != reader_revision) reader_render();
+    else if (reading->ready && !reading->indexing && reading->pages != reader_rendered_pages)
+    {
+        /* A completed index updates only the footer; no body, clock or progress invalidation. */
+        reader_footer_render();
+    }
 }
 
 static void reader_touch_event(lv_event_t *event)
@@ -764,7 +810,9 @@ static void reader_touch_event(lv_event_t *event)
 static void reader_create(lv_obj_t *screen)
 {
     const ui_reader_view_t *reading = ui_reader_view();
-    page_title_create(screen, reading->title, ui_font_small());
+    const lv_font_t *title_font = ui_font_small();
+    label_create(screen, reading->title, PAGE_TITLE_X, (UI_READER_TOP - title_font->line_height) / 2,
+                 WIDTH - MARGIN - PAGE_TITLE_X, title_font);
     reader_body = label_create(screen, "", reading->margin, UI_READER_TOP,
                                 WIDTH - 2 * reading->margin, reading->font);
     lv_label_set_long_mode(reader_body, LV_LABEL_LONG_WRAP);
@@ -774,16 +822,23 @@ static void reader_create(lv_obj_t *screen)
     lv_obj_set_style_text_color(reader_body, lv_color_black(), 0);
     lv_obj_add_flag(reader_body, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(reader_body, reader_touch_event, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *track = panel_create(screen, MARGIN, UI_READER_BOTTOM + 20, CONTENT_WIDTH, 8);
+    lv_obj_t *track = panel_create(screen, MARGIN, UI_READER_BOTTOM + 6, CONTENT_WIDTH, 4);
     lv_obj_remove_flag(track, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_radius(track, 0, 0);
-    reader_progress = panel_create(track, 0, 0, 0, 8);
+    reader_progress = panel_create(track, 0, 0, 0, 4);
     lv_obj_remove_flag(reader_progress, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_radius(reader_progress, 0, 0);
     lv_obj_set_style_border_width(reader_progress, 0, 0);
     lv_obj_set_style_bg_color(reader_progress, lv_color_black(), 0);
-    reader_footer = centered_label(screen, "", MARGIN, UI_READER_BOTTOM + 40,
-                                   CONTENT_WIDTH, ui_font_caption());
+    const lv_font_t *status_font = ui_font_body();
+    const lv_font_t *page_font = ui_font_caption();
+    int footer_y = HEIGHT - 8 - status_font->line_height;
+    reader_battery = label_create(screen, "", 8, footer_y, 180, status_font);
+    reader_footer = centered_label(screen, "", 200,
+                                   footer_y + (status_font->line_height - page_font->line_height) / 2,
+                                   WIDTH - 400, page_font);
+    reader_clock = label_create(screen, "", WIDTH - 188, footer_y, 180, status_font);
+    lv_obj_set_style_text_align(reader_clock, LV_TEXT_ALIGN_RIGHT, 0);
     reader_render();
 }
 
@@ -810,11 +865,13 @@ static void reader_panel_close(void)
     while (focus_count > reader_panel_focus_start) focus_items[--focus_count] = NULL;
     for (unsigned i = 0; i < focus_count; ++i) lv_group_add_obj(group, focus_items[i]);
     if (focus_count) lv_group_focus_obj(focus_items[0]);
+    reader_status_render();
 }
 
 static void reader_panel_open(void)
 {
     if (reader_panel || !ui_reader_view()->ready) return;
+    reader_status_render();
     reader_panel_focus_start = focus_count;
     reader_jump = ui_reader_view()->page;
     reader_panel = panel_create(lv_screen_active(), MARGIN, 798, CONTENT_WIDTH, 390);
@@ -863,7 +920,9 @@ static void page_create(void)
     popup_text = popup_button = NULL;
     weather_popup_phase = 0;
     reader_body = reader_footer = reader_progress = reader_panel = NULL;
+    reader_battery = reader_clock = NULL;
     reader_option_label = reader_jump_label = NULL;
+    reader_rendered_pages = 0;
     lv_obj_t *screen = lv_obj_create(NULL);
     epd_obj_init(screen);
     lv_obj_set_size(screen, WIDTH, HEIGHT);
@@ -884,7 +943,9 @@ static void page_create(void)
     else if (entry->page == UI_PAGE_WEATHER_SETTINGS) weather_settings_create(screen);
     else placeholder_create(screen, entry->page);
     if (entry->page != UI_PAGE_HOME && entry->page != UI_PAGE_LOCK)
-        icon_button_create(screen, MARGIN, BACK_BUTTON_Y, &ui_icon_back, NAV_BACK);
+        icon_button_create(screen, MARGIN,
+                           entry->page == UI_PAGE_READER ? (UI_READER_TOP - ICON_BUTTON_SIZE) / 2 : BACK_BUTTON_Y,
+                           &ui_icon_back, NAV_BACK);
     if (focus_count) lv_group_focus_obj(focus_items[entry->focus < focus_count ? entry->focus : 0]);
     status_render();
     /* A zero-duration load deletes the previous tree without an animation timer. */
@@ -904,7 +965,6 @@ bool launcher_init(void)
             recent = book;
     }
     if (recent) ui_app_set_recent_reading(recent->file.name, recent->position.progress);
-    epd_wave_set_part_times(ui_settings_refresh_count());
     group = lv_group_create();
     if (!group) return false;
     /* Use static, flat styles without the default theme's interaction effects. */
@@ -917,8 +977,7 @@ bool launcher_init(void)
     lv_style_set_shadow_width(&epd_style, 0);
     lv_group_set_wrap(group, true);
     ui_nav_init(&navigation);
-    ui_weather_process();
-    ui_app_set_weather_summary(ui_weather_view()->summary);
+    weather_data_update();
     page_create();
     initialized = true;
     return true;
@@ -937,12 +996,72 @@ void launcher_open(ui_page_id_t page)
         pending_page = page;
 }
 
+bool launcher_input_ready(launcher_key_t key)
+{
+    if (!initialized || pending_page != NAV_IDLE || weather_popup_phase || !lv_refreshing_done())
+        return false;
+    if (launcher_current_page() == UI_PAGE_READER && !popup)
+    {
+        if (reader_confirm_pending && key != LAUNCHER_KEY_ENTER && key != LAUNCHER_KEY_BACK)
+            return false;
+        if (!reader_panel && ui_reader_waiting() && key != LAUNCHER_KEY_ENTER)
+            return false;
+    }
+    return true;
+}
+
+void launcher_move(const launcher_key_event_t *events, unsigned count)
+{
+    if (!count) return;
+    if (launcher_current_page() == UI_PAGE_LOCK) return;
+    if (launcher_current_page() == UI_PAGE_READER && !reader_panel && !popup)
+    {
+        const ui_reader_view_t *reading = ui_reader_view();
+        int target = (int)reading->page;
+        int last = reading->pages ? (int)reading->pages : 65536;
+        for (unsigned i = 0; i < count; ++i)
+        {
+            target += events[i].key == LAUNCHER_KEY_PREVIOUS ? -(int)events[i].repeat : events[i].repeat;
+            if (target < 1) target = 1;
+            if (target > last) target = last;
+        }
+        /* One bounded target; indexing can catch up without displaying intermediate pages. */
+        if (target != (int)reading->page) ui_reader_seek((unsigned)target);
+        return;
+    }
+
+    lv_obj_t *items[FOCUS_CAPACITY];
+    unsigned eligible = 0;
+    int target = 0;
+    lv_obj_t *focused = lv_group_get_focused(group);
+    unsigned total = lv_group_get_obj_count(group);
+    for (unsigned i = 0; i < total && eligible < FOCUS_CAPACITY; ++i)
+    {
+        lv_obj_t *item = lv_group_get_obj_by_index(group, i);
+        if (lv_obj_has_state(item, LV_STATE_DISABLED)) continue;
+        lv_obj_t *parent = item;
+        while (parent && !lv_obj_has_flag(parent, LV_OBJ_FLAG_HIDDEN))
+            parent = lv_obj_get_parent(parent);
+        if (parent) continue;
+        if (item == focused) target = (int)eligible;
+        items[eligible++] = item;
+    }
+    if (!eligible) return;
+    for (unsigned i = 0; i < count; ++i)
+    {
+        int step = events[i].repeat % eligible;
+        target += events[i].key == LAUNCHER_KEY_PREVIOUS ? -step : step;
+        target = (target + (int)eligible) % (int)eligible;
+    }
+    /* Change focus once so intermediate cards never become invalidated. */
+    if (items[target] != focused) lv_group_focus_obj(items[target]);
+}
+
 void launcher_key(launcher_key_t key)
 {
     if (!initialized || pending_page != NAV_IDLE || weather_popup_phase) return;
     if (launcher_current_page() == UI_PAGE_READER)
     {
-        if (!lv_refreshing_done()) return;
         if (reader_confirm_pending)
         {
             if (key == LAUNCHER_KEY_BACK || key == LAUNCHER_KEY_ENTER) pending_page = NAV_BACK;
@@ -1011,7 +1130,7 @@ static void weather_ui_process(void)
     if (lv_tick_elaps(weather_poll_tick) >= 250)
     {
         weather_poll_tick = now;
-        if (ui_weather_process()) ui_app_set_weather_summary(ui_weather_view()->summary);
+        weather_data_update();
     }
     if (!popup && lv_refreshing_done()) weather_time_update();
     if (!weather_popup_phase || !lv_refreshing_done()) return;
@@ -1055,7 +1174,7 @@ static void weather_ui_process(void)
         else if (launcher_current_page() == UI_PAGE_WEATHER_SETTINGS) weather_settings_render();
         else
         {
-            ui_weather_process();
+            weather_data_update();
             weather_time_update();
         }
     }
@@ -1065,6 +1184,11 @@ void launcher_process(void)
 {
     if (!initialized) return;
     weather_ui_process();
+    if (launcher_current_page() == UI_PAGE_SETTINGS && !popup && lv_refreshing_done())
+    {
+        setting_render(UI_SETTING_BLUETOOTH);
+        setting_render(UI_SETTING_FULL_REFRESH);
+    }
     if (launcher_current_page() == UI_PAGE_READER && (!reader_panel || reader_confirm_pending) &&
         !popup && lv_refreshing_done())
     {
@@ -1079,7 +1203,7 @@ void launcher_process(void)
                 reader_render();
             }
         }
-        if (ui_reader_view()->revision != reader_revision) reader_render();
+        reader_update();
         if (reader_return_panel && ui_reader_view()->ready)
         {
             reader_return_panel = false;
@@ -1088,6 +1212,8 @@ void launcher_process(void)
     }
     if (pending_page == NAV_IDLE) return;
     if (launcher_current_page() == UI_PAGE_READER && !lv_refreshing_done()) return;
+    if (pending_page == NAV_BACK && launcher_current_page() == UI_PAGE_TEXT_SETTINGS &&
+        reader_session && reader_settings_dirty && !lv_refreshing_done()) return;
     int target = pending_page;
     pending_page = NAV_IDLE;
     if (launcher_current_page() == UI_PAGE_READER)
@@ -1096,7 +1222,7 @@ void launcher_process(void)
         {
             ui_reader_turn(target == READER_PREVIOUS ? -1 : 1);
             ui_reader_process();
-            if (ui_reader_view()->revision != reader_revision) reader_render();
+            reader_update();
             return;
         }
         if (target == READER_MENU) { reader_panel_open(); return; }
@@ -1111,7 +1237,6 @@ void launcher_process(void)
                 else if (reader_option == 1)
                 {
                     ui_settings_cycle(UI_SETTING_FULL_REFRESH);
-                    epd_wave_set_part_times(ui_settings_refresh_count());
                 }
                 else reader_timeout = (reader_timeout + 1) % 4;
                 break;
@@ -1161,16 +1286,19 @@ void launcher_process(void)
         {
             ui_setting_id_t id = (ui_setting_id_t)(target - SETTING_CHANGE_BASE);
             if ((id >= UI_SETTING_FONT) != (launcher_current_page() == UI_PAGE_TEXT_SETTINGS)) return;
-            ui_settings_cycle(id);
-            if (id == UI_SETTING_FULL_REFRESH) epd_wave_set_part_times(ui_settings_refresh_count());
-            if (reader_session && id >= UI_SETTING_FONT && id != UI_SETTING_FONT_WEIGHT)
+            if (!ui_settings_cycle(id))
+            {
+                popup_open("设置失败，请重试", NULL);
+                return;
+            }
+            if (reader_session && id >= UI_SETTING_FONT)
                 reader_settings_dirty = true;
             setting_render(id);
             return;
         }
-        if (target == SETTINGS_SAVE && launcher_current_page() == UI_PAGE_SETTINGS)
+        if (target == SETTINGS_SAVE)
         {
-            popup_open("设置保存成功！", NULL);
+            popup_open(ui_settings_save() ? "设置保存成功！" : "保存失败，请重试", NULL);
             return;
         }
     }

@@ -26,7 +26,7 @@ void ui_reader_turn(int direction);
 const ui_reader_view_t *ui_reader_view(void);
 bool ui_reader_waiting(void);
 
-#define UI_READER_TOP 174
-#define UI_READER_BOTTOM 1120
+#define UI_READER_TOP 64
+#define UI_READER_BOTTOM 1152
 
 #endif

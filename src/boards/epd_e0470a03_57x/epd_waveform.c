@@ -5,6 +5,7 @@
  */
 
 #include <rtthread.h>
+#include <rthw.h>
 #include "epd_waveform.h"
 
 #include "string.h"
@@ -21,6 +22,7 @@
 static int g_part_disp_times = 10;      // 每 g_part_disp_times 次刷新做一次全刷，其余局刷
 static int reflesh_times = 0;
 static int s_force_full = 0;            // 一次性强制全刷标志（epd_wave_request_full 置位）
+static unsigned s_since_full;
 
 /* 强制使用静态波形表（跳过 bin 文件） */
 static int force_static_wave = 0;
@@ -52,19 +54,31 @@ static const char *temp_zone_names[] = {
 /* 设置全刷周期：每 val 次刷新做一次全刷；val<=0 等效 1（每次全刷） */
 void epd_wave_set_part_times(int val)
 {
-    g_part_disp_times = val > 0 ? val : 1;
+    val = val > 0 ? val : 1;
+    rt_base_t level = rt_hw_interrupt_disable();
+    if (g_part_disp_times != val)
+    {
+        g_part_disp_times = val;
+        s_since_full = 0;
+    }
+    rt_hw_interrupt_enable(level);
 }
 
 /* 获取当前全刷周期 */
 int epd_wave_get_part_times(void)
 {
-    return g_part_disp_times;
+    rt_base_t level = rt_hw_interrupt_disable();
+    int times = g_part_disp_times;
+    rt_hw_interrupt_enable(level);
+    return times;
 }
 
 /* 请求下一次刷新强制全刷（一次性） */
 void epd_wave_request_full(void)
 {
+    rt_base_t level = rt_hw_interrupt_disable();
     s_force_full = 1;
+    rt_hw_interrupt_enable(level);
 }
 
 /* 获取/设置波形模式 */
@@ -178,6 +192,7 @@ void epd_wave_table(void)
 
 uint32_t epd_wave_table_get_frames(int temperature, EpdDrawMode mode)
 {
+    rt_base_t level = rt_hw_interrupt_disable();
     reflesh_times++;
 
     // 首刷 / 一次性请求：强制全刷（清残影、开机首刷）
@@ -189,10 +204,12 @@ uint32_t epd_wave_table_get_frames(int temperature, EpdDrawMode mode)
     // AUTO 模式：每 g_part_disp_times 次做一次全刷，其余局刷
     else if (EPD_DRAW_MODE_AUTO == mode)
     {
-        mode = (reflesh_times % g_part_disp_times == 0)
+        mode = (++s_since_full >= (unsigned)g_part_disp_times)
                ? EPD_DRAW_MODE_FULL
                : EPD_DRAW_MODE_PARTIAL;
     }
+    if (mode == EPD_DRAW_MODE_FULL) s_since_full = 0;
+    rt_hw_interrupt_enable(level);
 
     // 刷屏计划日志（验证全刷周期：每 N 次出现一次 FULL）
     rt_kprintf("EPD: refresh #%d -> %s\n", reflesh_times,

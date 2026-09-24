@@ -209,19 +209,26 @@ static bool layout_prepare(uint32_t anchor)
     uint32_t font_id;
     lv_font_t *fallback;
     lv_font_t *font = ui_font_reader_create(ui_settings_index(UI_SETTING_FONT),
-                                          sizes[ui_settings_index(UI_SETTING_FONT_SIZE)], &font_id, &fallback);
+                                          sizes[ui_settings_index(UI_SETTING_FONT_SIZE)],
+                                          ui_settings_index(UI_SETTING_FONT_WEIGHT), &font_id, &fallback);
     if (!font) { fail("字体内存不足，无法打开书籍"); return false; }
-    if (reader.font) lv_tiny_ttf_destroy(reader.font);
-    if (reader.fallback) lv_tiny_ttf_destroy(reader.fallback);
+    unsigned encoding = ui_settings_index(UI_SETTING_ENCODING);
+    if (reader_set_encoding(encoding) != RT_EOK)
+    {
+        ui_font_reader_destroy(font);
+        ui_font_reader_destroy(fallback);
+        fail("文件编码设置失败");
+        return false;
+    }
+    ui_font_reader_destroy(reader.font);
+    ui_font_reader_destroy(reader.fallback);
     reader.font = font;
     reader.fallback = fallback;
     reader.view.font = font;
     reader.view.margin = 24 + margins[ui_settings_index(UI_SETTING_MARGIN)];
     reader.view.line_space = font->line_height * ui_settings_index(UI_SETTING_LINE_SPACING) / 5;
-    unsigned encoding = ui_settings_index(UI_SETTING_ENCODING);
-    reader_set_encoding(encoding);
     /* Bump the seed when pagination or normalization rules change. */
-    uint32_t layout[] = {4, font_id, reader.view.margin, reader.view.line_space, encoding,
+    uint32_t layout[] = {5, font_id, reader.view.margin, reader.view.line_space, encoding,
                          UI_READER_BOTTOM - UI_READER_TOP, font->line_height};
     reader.layout = offsets_hash(layout, sizeof(layout) / sizeof(layout[0]));
     reader.anchor = anchor < reader.file.data_start ? reader.file.data_start : anchor;
@@ -245,8 +252,8 @@ void ui_reader_close(void)
 {
     if (reader.opened) position_save();
     reader_close();
-    if (reader.font) lv_tiny_ttf_destroy(reader.font);
-    if (reader.fallback) lv_tiny_ttf_destroy(reader.fallback);
+    ui_font_reader_destroy(reader.font);
+    ui_font_reader_destroy(reader.fallback);
     lv_free(reader.text); lv_free(reader.scratch); lv_free(reader.window);
     lv_free(reader.mapping); lv_free(reader.offsets);
     memset(&reader, 0, sizeof(reader));

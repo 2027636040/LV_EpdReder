@@ -53,6 +53,8 @@ rt_err_t btpan_init(const char *device_name);
 /**
  * @brief 蓝牙开关（对应设置页“蓝牙”开关；关闭会断开当前连接）
  * @param enable true 打开（恢复可被发现/连接），false 关闭
+ * @return RT_EOK 表示请求已接受；连接控制在 PAN 工作线程执行。
+ * @note 关闭会停止自动重连，不关闭蓝牙控制器电源。
  */
 rt_err_t btpan_enable(bool enable);
 

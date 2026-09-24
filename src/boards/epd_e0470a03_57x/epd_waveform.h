@@ -33,7 +33,7 @@ void epd_wave_set_tempzone(int zone);
 /* 获取当前温度区间索引 */
 int epd_wave_get_tempzone(void);
 
-/* 设置全刷周期：每 val 次刷新做一次全刷（默认 10）；val 传 0 等效 1（每次全刷） */
+/* 设置全刷周期（默认 10）；val<=0 等效 1。周期变化或全刷后重新计数。 */
 void epd_wave_set_part_times(int val);
 
 /* 获取当前全刷周期（每 N 次刷新一次全刷） */
