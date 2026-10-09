@@ -19,15 +19,64 @@
 - 屏幕驱动与波形：**全部在 SDK 内** `customer/peripherals/display/epd_e0470a03/`（E0470A03 专用驱动 + `waveform/` 波形 bin/头/库）；Kconfig 项 `LCD_USING_EPD_E0470A03` 定义于 `customer/peripherals/Kconfig`，由 `project/Kconfig.proj` 的板级选择项 `select`。SDK 原有的 `epd_opm060da`（6" 通用驱动）保持原样、不参与编译。工程侧不再保留任何屏驱/波形文件。
 
 ## 构建
-```powershell
-# 1. 激活 SiFli 环境（以本机 SDK 路径为准）
-. <SiFli-SDK>\export.ps1
 
-# 2. 编译
+### 前置依赖（首次构建前一次性准备）
+
+以下工具/数据**缺任一项都会编译失败**：
+
+| 依赖 | 用途 | 缺失时的报错 |
+|---|---|---|
+| SiFli-SDK 环境 | 交叉工具链 | `Please run set_env.bat in root folder of SIFLI SDK` |
+| Visual Studio 2022 Build Tools | 用 MSVC 编译宿主机工具 `mklfsimg.exe`（生成 fs_root 镜像） | `RuntimeError: Visual Studio C++ build tools are required` |
+| Node.js + `sharp` | `modules/words` 渲染入口图标 | `Error: Cannot find module 'sharp'` |
+| `cet4.wdb` 随包词库 | `modules/words` 四级词库 | `Source ...\output\dictionaries\cet4.wdb not found` |
+| sf-pkg 组件 `epd-sdcard` | SD 卡服务（`components/sdcard`） | `attempt to assign the value 'y' to the undefined symbol PKG_USING_EPD_SDCARD` |
+
+#### 1. 激活 SiFli 环境
+
+```powershell
+. <SiFli-SDK>\export.ps1
+```
+
+#### 2. Visual Studio C++ 生成工具
+
+`tools/lfs_image.py` 需要用 MSVC 现场编译 `mklfsimg.exe`：
+在命令行终端输入以下命令：
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools --accept-package-agreements --accept-source-agreements --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+#### 3. Node.js + sharp（words 模块图标）
+
+```powershell
+cd modules\words
+npm install --no-save --package-lock=false --include=optional sharp
+```
+
+> `--include=optional` 不要省：`sharp` 的平台二进制属于可选依赖，漏装会出现"包装上了但 `require('sharp')` 仍失败"。
+
+#### 4. 四级词库 cet4.wdb
+
+`modules/words/output/dictionaries/cet4.wdb`（2,165,473 B）是本地生成物，**不随仓库提供**
+
+- **解决方法**：向已有该文件的同事索取 `cet4.wdb` 与 `cet4.wdb.json`，放到 `modules/words/output/dictionaries/`；
+
+
+#### 5. sf-pkg 组件（epd-sdcard）
+
+`project/sf-pkg.yaml` 声明了 `epd-sdcard` 组件，首次构建前需安装：
+
+
+### 编译与烧录
+
+```powershell
 cd project
 scons --board=dpi-hdk_lb57gyd7n6_epd -j11
+```
 
-# 3. 烧录
+烧录：
+
+```powershell
 project\build_dpi-hdk_lb57gyd7n6_epd_hcpu\uart_download.bat
 ```
 
