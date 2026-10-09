@@ -31,7 +31,8 @@ READ = C.CFUNCTYPE(C.c_bool, C.c_void_p, C.c_uint32, C.c_void_p, C.c_size_t)
 
 class Dictionary(C.Structure):
     _fields_ = [('read', READ), ('context', C.c_void_p)] + [
-        (name, C.c_uint32) for name in ('count', 'aliases', 'index', 'alias_index', 'data', 'size')]
+        (name, C.c_uint32) for name in ('count', 'aliases', 'index', 'alias_index', 'data', 'size',
+                                     'version', 'scopes', 'scope_index', 'members', 'data_end')] + [('identity', C.c_ubyte * 24)]
 
 
 class Matches(C.Structure):

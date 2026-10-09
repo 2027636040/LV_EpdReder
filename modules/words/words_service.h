@@ -7,7 +7,7 @@
 
 typedef enum { WORDS_SEARCH, WORDS_DETAIL, WORDS_HOME, WORDS_NEXT, WORDS_RATE,
                WORDS_COLLECTION, WORDS_COLLECT, WORDS_PAUSE, WORDS_QUOTA,
-               WORDS_BOOKS, WORDS_BOOK_SELECT } words_job_kind_t;
+               WORDS_SCOPES, WORDS_SCOPE_SELECT } words_job_kind_t;
 typedef struct
 {
     uint32_t serial, entry, slot, token, value;
@@ -22,15 +22,22 @@ typedef struct
     uint32_t slot, token, flags, quota, offset;
     words_counts_t counts;
     bool clock_valid, accepted;
-    char book[WORDS_KEY_SIZE];
-    char book_paths[WORDS_MATCH_MAX][STORAGE_PATH_MAX];
+    char scope_name[WORDS_KEY_SIZE];
+    char scope_ids[WORDS_MATCH_MAX][32];
     words_matches_t matches;
     char names[WORDS_MATCH_MAX][WORDS_KEY_SIZE];
     char path[STORAGE_PATH_MAX], error[96];
     unsigned char identity[24];
-    char content[WORDS_ENTRY_MAX];
+    char *content, *display_text;
+    uint32_t content_size;
+    words_entry_t view;
     const char *fields[WORDS_FIELD_COUNT];
 } words_result_t;
+
+bool words_result_reserve(words_result_t *result, uint32_t size);
+bool words_result_parse(words_result_t *result);
+void words_result_clear(words_result_t *result);
+void words_result_free(words_result_t *result);
 
 bool words_service_start(void);
 bool words_service_flush(void);

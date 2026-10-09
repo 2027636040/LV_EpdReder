@@ -17,6 +17,13 @@ static words_config_t config;
 static uint32_t count, capacity, cached_chunk;
 static bool dirty_chunk, dirty_config;
 static char error[96];
+/* V1 configuration is read once; record chunks and pending slot identities stay unchanged. */
+typedef struct
+{
+    char book[STORAGE_PATH_MAX], title[WORDS_KEY_SIZE], imported_title[WORDS_KEY_SIZE];
+    uint8_t identity[24];
+    uint32_t cursor, pending, quota;
+} legacy_config_t;
 
 static bool fail(const char *text) { snprintf(error, sizeof(error), "%s", text); return false; }
 static void chunk_path(char *path, uint32_t n) { snprintf(path, 96, "%s/states/%03lu.dat", root, (unsigned long)n); }
@@ -59,7 +66,7 @@ bool words_store_flush(void)
     }
     if (dirty_config)
     {
-        if (!storage_record_save(config_path, CONFIG_MAGIC, 1, &config, sizeof(config)))
+        if (!storage_record_save(config_path, CONFIG_MAGIC, 2, &config, sizeof(config)))
             return fail("设置保存失败");
         dirty_config = false;
     }
@@ -91,29 +98,27 @@ bool words_store_open(void)
     cache = epd_app_alloc(sizeof(*cache), EPD_APP_PSRAM);
     if (!cache) return fail("内存不足");
     memset(&config, 0, sizeof(config));
-    storage_app_path(config.book, sizeof(config.book), "words", STORAGE_APP_CODE, "res/library.wdb");
-    strcpy(config.title, "内置词书"); config.quota = 20;
+    strcpy(config.scope_name, "请选择学习范围"); config.quota = 20;
     if (!storage_mkdirs(states) || !storage_file_recover(config_path)) return fail("应用存储不可用");
     struct stat st;
-    storage_lock(); bool exists = stat(config_path, &st) == 0; storage_unlock();
-    if (exists && (!storage_record_load(config_path, CONFIG_MAGIC, 1, &config, sizeof(config)) ||
-        !memchr(config.book, 0, sizeof(config.book)) || !memchr(config.title, 0, sizeof(config.title)) ||
-        !memchr(config.imported_title, 0, sizeof(config.imported_title)) ||
-        config.quota > 200)) return fail("设置文件损坏");
-    if (!strcmp(config.book, STORAGE_FLASH_APPS "/words/res/library.wdb") ||
-        !strcmp(config.book, STORAGE_SD_APPS "/words/res/library.wdb"))
+    storage_lock();
+    int config_status = stat(config_path, &st), config_errno = errno;
+    storage_unlock();
+    if (config_status != 0 && config_errno != -ENOENT) return fail("设置文件读取失败");
+    bool exists = config_status == 0;
+    if (exists && !storage_record_load(config_path, CONFIG_MAGIC, 2, &config, sizeof(config)))
     {
-        char builtin[sizeof(config.book)];
-        if (storage_app_path(builtin, sizeof(builtin), "words", STORAGE_APP_CODE, "res/library.wdb") &&
-            strcmp(config.book, builtin))
-        { strcpy(config.book, builtin); dirty_config = true; }
+        legacy_config_t old;
+        if (!storage_record_load(config_path, CONFIG_MAGIC, 1, &old, sizeof(old)) ||
+            !memchr(old.book, 0, sizeof(old.book)) || !memchr(old.title, 0, sizeof(old.title)) ||
+            !memchr(old.imported_title, 0, sizeof(old.imported_title)) || old.quota > 200)
+            return fail("设置文件损坏");
+        memset(&config, 0, sizeof(config));
+        config.quota = old.quota; config.pending = old.pending;
+        strcpy(config.scope_name, "请选择学习范围"); dirty_config = true;
     }
-    if (!strcmp(config.book, "/flash/data/words/book.wdb") || !strcmp(config.book, "/sdcard/.epd/data/words/book.wdb"))
-    {
-        char imported[sizeof(config.book)];
-        if (storage_app_path(imported, sizeof(imported), "words", STORAGE_APP_DATA, "book.wdb") &&
-            strcmp(imported, config.book)) { strcpy(config.book, imported); dirty_config = true; }
-    }
+    if (!memchr(config.scope_id, 0, sizeof(config.scope_id)) ||
+        !memchr(config.scope_name, 0, sizeof(config.scope_name)) || config.quota > 200) return fail("设置文件损坏");
     for (uint32_t n = 0; ; ++n)
     {
         char path[96]; chunk_path(path, n);
@@ -136,7 +141,8 @@ bool words_store_open(void)
         {
             words_record_t *r = &cache->records[j];
             if (!r->word[0] || !memchr(r->word, 0, sizeof(r->word)) || r->card.phase > WORDS_RELEARNING ||
-                r->content_size < WORDS_FIELD_COUNT || r->content_size > WORDS_ENTRY_MAX ||
+                r->content_size < WORDS_FIELD_COUNT || r->content_offset > INT32_MAX ||
+                r->content_size > INT32_MAX - r->content_offset ||
                 (r->flags & ~(WORDS_COLLECTED | WORDS_PAUSED)))
                 return fail("学习记录损坏");
             index_set(count++, r);
@@ -203,13 +209,16 @@ static bool transfer(int fd, void *data, size_t length, bool writing)
 
 int words_store_ensure(const words_result_t *entry)
 {
+    if (!entry->fields[WORDS_WORD] || !entry->content || !entry->content_size) return -2;
     int found = words_store_find(entry->fields[WORDS_WORD]);
-    if (found != -1) return found;
-    if (count == UINT32_MAX || !reserve(count + 1)) return -2;
+    if (found == -2) return -2;
+    if (found < 0 && (count == UINT32_MAX || !reserve(count + 1))) return -2;
     words_record_t record = {0};
+    if (found >= 0 && !words_store_get(found, &record)) return -2;
+    uint32_t crc = storage_crc32(entry->content, entry->content_size);
+    if (found >= 0 && record.content_size == entry->content_size && record.content_crc == crc) return found;
     strcpy(record.word, entry->fields[WORDS_WORD]);
-    record.content_size = (uint32_t)(entry->fields[WORDS_TAGS] + strlen(entry->fields[WORDS_TAGS]) + 1 - entry->content);
-    record.content_crc = storage_crc32(entry->content, record.content_size);
+    record.content_size = entry->content_size; record.content_crc = crc;
     storage_lock();
     int fd = storage_app_available("words") ? open(content_path, O_WRONLY | O_CREAT, 0) : -1;
     off_t offset = fd >= 0 ? lseek(fd, 0, SEEK_END) : -1;
@@ -219,7 +228,7 @@ int words_store_ensure(const words_result_t *entry)
     storage_unlock();
     if (!ok) { fail("词条保存失败，请检查应用存储"); return -2; }
     record.content_offset = (uint32_t)offset;
-    uint32_t slot = count;
+    uint32_t slot = found >= 0 ? (uint32_t)found : count;
     return words_store_put(slot, &record) ? (int)slot : -2;
 }
 
@@ -228,6 +237,13 @@ bool words_store_content(uint32_t slot, words_result_t *result)
     words_record_t record;
     if (!words_store_get(slot, &record)) return false;
     storage_lock();
+    struct stat st;
+    bool valid = storage_app_available("words") && stat(content_path, &st) == 0 &&
+        st.st_size >= 0 && (uint64_t)record.content_offset + record.content_size <= (uint64_t)st.st_size;
+    storage_unlock();
+    if (!valid) return fail("已保存词条读取失败");
+    if (!words_result_reserve(result, record.content_size)) return fail("内存不足");
+    storage_lock();
     int fd = storage_app_available("words") ? open(content_path, O_RDONLY) : -1;
     bool ok = fd >= 0 && lseek(fd, record.content_offset, SEEK_SET) == (off_t)record.content_offset &&
               transfer(fd, result->content, record.content_size, false);
@@ -235,15 +251,8 @@ bool words_store_content(uint32_t slot, words_result_t *result)
     storage_unlock();
     if (!ok || storage_crc32(result->content, record.content_size) != record.content_crc)
         return fail("已保存词条读取失败");
-    char *p = result->content, *end = p + record.content_size;
-    for (unsigned i = 0; i < WORDS_FIELD_COUNT; ++i)
-    {
-        result->fields[i] = p;
-        char *zero = p < end ? memchr(p, 0, end - p) : NULL;
-        if (!zero) return fail("已保存词条损坏");
-        p = zero + 1;
-    }
-    if (p != end || strcmp(record.word, result->fields[WORDS_WORD])) return fail("已保存词条损坏");
+    if (!words_result_parse(result)) return fail(result->error[0] ? result->error : "已保存词条损坏");
+    if (strcmp(record.word, result->fields[WORDS_WORD])) return fail("已保存词条损坏");
     result->slot = slot + 1; result->flags = record.flags;
     return true;
 }

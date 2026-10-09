@@ -1,4 +1,4 @@
-"""Convert a pinned ECDICT CSV to an EPD random-access dictionary."""
+"""Generate a WDB2 unified dictionary; legacy writer remains for migration tests."""
 import argparse
 import csv
 import hashlib
@@ -120,11 +120,25 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path)
     parser.add_argument('destination', type=Path)
-    parser.add_argument('--tag', help='ECDICT tag, e.g. cet4, cet6, gk; omit for all entries')
+    parser.add_argument('--tag', help='Legacy WDB1 tag filter; requires --legacy')
     parser.add_argument('--revision', default=ECDICT_REVISION)
+    parser.add_argument('--legacy', action='store_true', help='Generate WDB1 for migration testing')
+    parser.add_argument('--kajweb', type=Path, nargs='*', default=[], help='Actual JSON/JSON-lines files or repository ZIPs')
+    parser.add_argument('--catalog', type=Path, help='kajweb bookLists.txt from the same revision')
+    parser.add_argument('--kajweb-revision', default='3992bcb94c800a2fd38a9fd6ff95b2353e755363')
+    parser.add_argument('--include-scopes', default='', help='Keep the union of these scope IDs; omit for all headwords')
+    parser.add_argument('--mapping', type=Path)
     args = parser.parse_args()
     try:
-        report = build(args.source, args.destination, args.tag, args.revision)
+        if args.legacy:
+            report = build(args.source, args.destination, args.tag, args.revision)
+        else:
+            if args.tag:
+                raise ValueError('Use --include-scopes for WDB2')
+            from unified_dictionary import build as unified_build
+            report = unified_build(args.source, args.destination, args.kajweb, args.catalog,
+                                   filter(None, args.include_scopes.split(',')), args.revision,
+                                   args.kajweb_revision, args.mapping)
     except (ValueError, OSError, csv.Error) as error:
         parser.exit(1, str(error) + '\n')
-    print(json.dumps({key: report[key] for key in ('entries', 'aliases', 'bytes', 'tag')}, ensure_ascii=False))
+    print(json.dumps({key: report[key] for key in ('entries', 'aliases', 'bytes')}, ensure_ascii=False))

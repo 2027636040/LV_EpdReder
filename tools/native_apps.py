@@ -207,7 +207,7 @@ def add_words_package(env, sdk, repo, rgb565=True, palette=None, dictionary=None
 
     env.Command(str(icon), [str(module_dir / 'assets/icon.svg'), str(renderer)],
                 Action(render_icon, 'Render words icon'))
-    dictionary = Path(dictionary).resolve() if dictionary else module_dir / 'output/dictionaries/cet4.wdb'
+    dictionary = Path(dictionary).resolve() if dictionary else module_dir / 'output/dictionaries/unified-full/library.wdb'
     for source in (dictionary, dictionary.with_suffix('.wdb.json')):
         if not source.is_file():
             raise ValueError('words requires dictionary and report: ' + str(source) +
@@ -215,7 +215,8 @@ def add_words_package(env, sdk, repo, rgb565=True, palette=None, dictionary=None
     resources = {'library.wdb': dictionary,
                  'library.wdb.json': dictionary.with_suffix('.wdb.json'),
                  'LICENSE.ecdict': module_dir / 'LICENSE.ecdict',
-                 'LICENSE.fsrs': module_dir / 'LICENSE.fsrs'}
+                 'LICENSE.fsrs': module_dir / 'LICENSE.fsrs',
+                 'SOURCES.txt': module_dir / 'SOURCES.txt'}
     return add_package(env, sdk, repo, 'words', {'icon.ezip': icon}, rgb565, palette, resources)
 
 

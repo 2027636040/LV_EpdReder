@@ -16,7 +16,7 @@ from check_app_imports import verify
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--firmware', type=Path, default=REPO / 'project/build_dpi-hdk_lb57gyd7n6_epd_hcpu')
-    parser.add_argument('--dictionary', type=Path, default=MODULE / 'output/dictionaries/cet4.wdb')
+    parser.add_argument('--dictionary', type=Path, default=MODULE / 'output/dictionaries/unified-full/library.wdb')
     parser.add_argument('--icon', type=Path)
     parser.add_argument('--output', type=Path, help='New archive directory; defaults to firmware/app-resources/words')
     args = parser.parse_args()
@@ -27,7 +27,7 @@ if __name__ == '__main__':
         with tempfile.TemporaryDirectory(prefix='words-resources-') as temporary:
             resources = Path(temporary) / 'res'
             resources.mkdir()
-            for name in ('LICENSE.fsrs', 'LICENSE.ecdict'):
+            for name in ('LICENSE.fsrs', 'LICENSE.ecdict', 'SOURCES.txt'):
                 shutil.copyfile(MODULE / name, resources / name)
             shutil.copyfile(args.dictionary, resources / 'library.wdb')
             shutil.copyfile(args.dictionary.with_suffix('.wdb.json'), resources / 'library.wdb.json')

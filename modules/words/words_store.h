@@ -4,7 +4,7 @@
 
 typedef struct
 {
-    char book[STORAGE_PATH_MAX], title[WORDS_KEY_SIZE], imported_title[WORDS_KEY_SIZE];
+    char scope_id[32], scope_name[WORDS_KEY_SIZE];
     uint8_t identity[24];
     uint32_t cursor, pending, quota;
 } words_config_t;

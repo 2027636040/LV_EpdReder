@@ -5,6 +5,7 @@ import ctypes as C
 import importlib.util
 from pathlib import Path
 import tempfile
+from test_unified import fixture, builder as unified_builder
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('builder', ROOT / 'tools/build_dictionary.py')
@@ -18,6 +19,7 @@ lib = C.CDLL(str(args.library.resolve()))
 lib.words_test_file.argtypes = [C.c_char_p, C.c_void_p, C.c_uint32]
 lib.words_test_file.restype = C.c_bool
 lib.words_test_learning.restype = C.c_int
+lib.words_test_faults.restype = C.c_int
 with tempfile.TemporaryDirectory(prefix='words-learning-') as folder:
     directory = Path(folder)
     source = directory / 'words.csv'
@@ -31,7 +33,21 @@ with tempfile.TemporaryDirectory(prefix='words-learning-') as folder:
     data = path.read_bytes()
     for filename in (b'/flash/apps/words/res/library.wdb', b'/sdcard/words/books/second.wdb'):
         assert lib.words_test_file(filename, data, len(data))
+    updated = directory / 'updated'; updated.mkdir()
+    newer, report = fixture(updated, extra=True)
+    data = newer.read_bytes(); assert lib.words_test_file(b'/fixtures/new.wdb', data, len(data))
+    large_source = directory / 'large.csv'
+    with large_source.open('w', encoding='utf-8', newline='') as stream:
+        writer = csv.writer(stream)
+        writer.writerow(('word', 'translation', 'tag'))
+        writer.writerow(('enormous', '长' * 20000, 'cet4'))
+    large = directory / 'large.wdb'; unified_builder.build(large_source, large)
+    data = large.read_bytes(); assert lib.words_test_file(b'/fixtures/large.wdb', data, len(data))
     result = lib.words_test_learning()
     if result:
         raise SystemExit(f'Learning integration failed at C harness line {result}')
-print('Learning integration passed: resume, ratings, deduplication, quotas, day rollover, collection, pause, import, save retry, 9217-record reload, allocation failure/retry, identity and resource release.')
+    result = lib.words_test_faults()
+    if result:
+        raise SystemExit(f'Fault injection failed at C harness line {result}')
+print('Learning integration passed: V1 migration, pending resume, shared scope progress, due preservation, reorder/update, quotas, collection, pause, save retry, 9217-record reload, allocation/read failure, SD removal/reload, stale generation, cancellation and resource release.')
+print('Fault injection passed: real content/display/index/message allocations, >32 KiB saved entry, malformed offsets/members/payload, pending retry, config IO failure, in-flight removal/reinsertion/update, and production worker result ownership/shutdown.')

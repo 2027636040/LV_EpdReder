@@ -1,92 +1,118 @@
 # 单词应用
 
-## 当前实现
+## 功能与内容组织
 
-`words.so` 是按需运行的动态应用，提供首页、今日学习、离线查词、生词本、词书选择、词条详情分页和应用设置。退出详情恢复原页面；返回应用列表前同步待保存数据，随后停止受管线程。无任务时线程阻塞，请求完成后暂停页面定时器；没有光标闪烁、滚动字幕或转场动画。
+`words.so` 提供离线查词、今日学习、生词本、学习范围和完整词条详情。ECDICT 和 kajweb/dict 在电脑端合成为一个词库；查词和学习使用相同词条，用户不需要选择来源或词书文件。
 
-查询顺序为完整词头、词形映射、前缀候选。一次最多展示八个候选；超过时提示补充字母，不猜测有歧义的原形。索引按需读取，词条缓冲上限为 32 KiB，不把完整词库加载到 RAM。
+查询顺序是完整词头、词形映射、前缀候选。一次展示最多八个候选，超过时提示补充字母。查询键仅折叠 ASCII 大小写；学习身份保留原始大小写，`Apple` 和 `apple` 不会自动合并。屈折词形只用于查找对应词条，不改变学习记录身份。
 
-FSRS-6 已接入“查看答案—四档评分—下一个词”。评分单位是整个单词。同一词在不同词书和生词本中共用一份记录；移出生词本不删除已学进度，暂停学习是独立操作。未评分退出后从该词正面恢复，应用内从完整释义返回保留答案展开状态。
+详情分别显示音标、释义、词形、例句、短语、同根词、范围和来源。整合规则为：
 
-学习队列优先安排到期的短期学习/重学，其次到期复习，再安排新词。每日新词默认 20，可在应用设置中即时调整为 0～200；达到额度不限制到期复习。当前词书是主要新词来源，每完成三个新词后优先补入一个尚未学习的收藏词；词书耗尽后由生词本补充，两者共用额度。当前词书内部按词头索引顺序取词，尚未接入词频排序。
+- 相同原始词头关联为一个词条；同一种内容经空白规范化后完全相同才合并，并保留全部来源。
+- 不同音标、释义和译文并存，不自动覆盖。音标保留英式、美式和未分类标记。
+- ECDICT 的中英文释义没有可靠的一一对应关系，因此分别保留；kajweb 同一 trans 对象内的中英文可以共同显示。
+- 例句与短语保留在词条层级，不推断它们属于哪条释义。
+- 同根词不当作屈折词形别名，避免把不同词误查成同一词。
 
-首页显示当前词书、待复习数量、今日新词和今日复习数量。统计区分当天首次学习、当天不同已学词的复习和评分次数，不因同日重复评分重复计算新词。RTC 未设置时可以查词，但不接受学习评分；本 SDK 的本地 RTC 时间在调度入口转换为 UTC。
+首页与设置显示“四级、六级、雅思”等学习范围，不显示 JSON 或 WDB 文件名。范围由预生成的成员索引表达；同词属于多个范围时不重复存储正文，不重复安排新词。范围只控制后续新词，查词仍检索整个已部署词库。提供哪些范围由部署资源决定，不要求多范围组合或词频排序。
 
-## 学习数据和词书
+## 学习算法、身份与迁移
 
-数据目录随应用安装位置解析：内部为 `/flash/data/words`，TF 卡为 `/sdcard/.epd/data/words`：
+继续使用 FSRS-6：以整个单词为一张卡，查看答案后按四档评分。学习顺序为到期学习/重学、到期复习、随后新词。默认每天 20 个新词，可在设置中调整为 0～200；额度不限制到期复习。每完成三个范围内新词，优先补入一个未学习的收藏词；范围耗尽后由生词本补充，两者共用额度。
+
+永久身份为 `en:<NFC 原始词头>`，不是词条序号或文件偏移。学习记录保存原始词头，词库重新生成后重新按词头关联。切换范围只重置新词游标，保留已学进度、旧范围到期复习、未评分卡片、每日计数、收藏和暂停状态。移出生词本不删除学习记录。
+
+| 数据 | 升级处理 |
+| --- | --- |
+| WDB1 词库 | 继续可读，以“全部词汇”表示其成员范围；不要求设备转换原始数据 |
+| 旧六字段内容快照 | 继续可读；词库有相同词头时按需补充为新内容，保留 FSRS 状态 |
+| 旧学习记录块 | 二进制结构不变，按原始词头共用记录 |
+| 旧配置 version 1 | 保留额度和未评分会话；迁移为范围配置，重新建立新词游标 |
+| 新词库 generation 变化 | 清除旧索引关联和范围游标；按词头恢复学习内容，不删除旧进度 |
+
+应用清单 version 为 3，data_version 仍为 1，允许平台进行保留数据的原位升级；配置自身的版本由应用迁移。同一安装卷内使用“更新应用”；从内部 Flash 转移到 TF 卡时，按下文的跨卷安装步骤操作，不手动删除学习数据。
+
+调度核心 `core/words_fsrs.c` 不依赖 RTOS、文件系统或 LVGL。使用 FSRS-6 默认 21 参数、90% 目标回忆率、60/600 秒学习步骤、600 秒重学步骤、最长 36,500 天，关闭随机微调。RTC 未设置时仍能查词，但不能评分；本地 RTC 在调度入口转换为 UTC。
+
+## 存储、按需读取与生命周期
+
+数据随安装卷保存：内部安装为 `/flash/data/words`，TF 卡安装为 `/sdcard/.epd/data/words`。
 
 | 文件 | 用途 |
 | --- | --- |
-| `config.dat` | 当前词书、每日额度、词书游标、未评分会话 |
-| `states/000.dat` 等 | 每块 32 条学习记录，复用平台带 CRC 的记录保存接口 |
-| `content.bin` | 已学习、已收藏和当前待学词的内容快照，按偏移读取 |
-| `book.wdb` | 最近一次导入的词书 |
+| config.dat | 范围 ID、词库 generation、新词游标、额度和未评分会话 |
+| states/000.dat 等 | 每块 32 条学习记录，复用平台带 CRC 的记录接口 |
+| content.bin | 学习与收藏词的内容快照，按长度和偏移读取 |
+| library.wdb（可选） | 管理员部署的统一词库替换文件 |
 
-工作线程是这些数据的唯一写入者。只读请求离开页面后可以取消，已提交的评分、收藏和设置命令按先后顺序执行；响应携带请求代次，评分另外校验当前卡片与会话号。页面不持有后台可变记录，后台不访问控件。评分更新内存并发布下一词结果后执行后台保存；块切换需要先保存当前脏块，不会重写全部学习记录。正常返回应用列表和平台受控关机入口等待保存，失败则提示并允许重试。突然断电可能丢失最后尚未写入的操作。
+统一词库按以下优先级选择，查词与学习共用该规则：
 
-学习索引按需增长，优先预留到 128 条的整数倍；预留申请失败时尝试本次所需容量。学习/收藏记录不设固定条数上限，扩容失败保留已有索引并报告内存不足；索引编号及分配长度仍检查整数范围。正文缓冲每个最多 32 KiB，状态块缓存只有一块。应用安装卷空间不足会返回写入失败。应用停止后释放索引、块缓存、页面快照及详情缓冲。
+1. 应用数据目录的 `library.wdb`。
+2. `/sdcard/words/library.wdb`。
+3. 应用安装目录的 `res/library.wdb`。
 
-将电脑端生成的独立 `.wdb` 词书放入 TF 卡 `/words/books/`，或应用数据目录的 `books/`。词书页面分页列出这些文件、随包词书和最近导入的词书。选择外部词书时检查应用安装卷的剩余空间，分块复制到应用数据目录、核对写入内容并验证词条后再切换；中途返回会取消未完成的导入。内部安装的应用在拔卡后仍可读取已导入词书；卡内安装则连同词书和学习记录一起随卡携带。切换词书不会删除旧词的到期复习。
+扩展资源是同一逻辑词库的完整生成产物，不是第二个供用户切换的数据源，也不与随包库按文件分别排学习队列。旧版 `book.wdb` 和 `books/` 文件不再作为词书入口；不会主动删除这些旧文件，已学习内容仍保存在独立快照中。
 
-目前内部只保存一个导入词书槽位，新导入替换该槽位；学习内容快照另存，因此旧词仍可复习。完整查询库应放在 `/sdcard/words/library.wdb`，不要作为整本学习词书导入内部存储。
+格式说明见 [WDB2.md](WDB2.md)。设备按预生成索引读取单条内容，不加载完整词库，不解析 CSV/JSON，不在首次运行时扫描建索引。词条和展示缓冲按实际长度申请；不设 32 KiB 等固定正文上限。检查整数运算、文件实际大小、索引和记录边界、读取及分配结果。学习记录索引按需增长，申请失败保留已有记录并报告错误。
 
-## 词库来源与格式
+受管后台线程是业务数据唯一写入者，不操作 LVGL 控件。页面通过请求代次领取独立结果快照；页面退到后台停止自己的查询定时器，页面销毁释放结果和详情文本。只读任务可取消，已提交的评分和收藏等写操作按顺序完成。评分先更新内存，再后台保存；正常退出同步待保存数据，失败可重试。
 
-- ECDICT：`bc015ed2e24a7abef49fc6dbbb7fe32c1dadaf8b`，原始 CSV SHA-256 为 `1a6947e04785db63613a92e14903cdae7954f7e84860b10e68e5c7cbb3f9c3cf`。
-- Py-FSRS：`9446cb06605c597a063aeee49f7d188d42e34dc2`，项目版本 6.3.2。
-- 许可分别保存在 `LICENSE.ecdict` 和 `LICENSE.fsrs`，打包时随应用携带。
+文件句柄不跨任务保留。结果携带词库 generation，进入详情和使用成员序号前重新核对，禁止旧索引读取新文件。更新资源应在应用退出后，用完整生成文件替换，不原地边写边读；再次进入后重新读取索引。generation 检查不是每次开文件计算整库 SHA256，不能代替部署过程的完整性校验。
 
-电脑端转换命令：
+TF 卡移除沿用平台的取消、停止服务和退出流程；模块检查安装卷会话及外部文件可用性，释放句柄和快照，不继续访问旧控件。重新插卡并确认加载后重新打开应用。突然拔卡或断电可以丢失尚未保存的操作，不会把另一词条的序号当成原词身份。
 
-```powershell
-python tools/build_dictionary.py <ecdict.csv> output/dictionaries/library.wdb
-python tools/build_dictionary.py <ecdict.csv> output/dictionaries/cet4.wdb --tag cet4
-```
+## 资源来源与授权
 
-工具不覆盖已有生成文件；新版本使用新输出目录。随词库生成 `.wdb.json` 报告，包含来源、摘要、容量、标签计数和被排除的条目。四级标签对应所选 ECDICT 快照，并非对当前考试大纲完整性的承诺。
+- [ECDICT](https://github.com/skywind3000/ECDICT)：快照 `bc015ed2e24a7abef49fc6dbbb7fe32c1dadaf8b`，MIT，许可见 LICENSE.ecdict。
+- [kajweb/dict](https://github.com/kajweb/dict)：快照 `3992bcb94c800a2fd38a9fd6ff95b2353e755363`。该快照没有明确开放许可证，仓库说明数据整理自有道背单词。包含其内容的产物用于本地开发验证；对外再分发前需要取得权利方许可，不能套用 ECDICT 的 MIT 许可。未打包音频和图片。
+- Py-FSRS 对照版本为 `9446cb06605c597a063aeee49f7d188d42e34dc2`（6.3.2），许可见 LICENSE.fsrs。
 
-当前二进制格式使用小端整数：64 字节头、104 字节定长词头索引、100 字节词形索引、按偏移定位的 UTF-8 词条。词条包含词头、音标、中文释义、英文释义、词形变化和标签，六个字段以 NUL 分隔。查询键仅折叠 ASCII 大小写；原始词头保留大小写、标点和 NFC 表示，可供后续学习状态使用固定身份 `en:<原始词头>`，不能使用索引序号作为永久身份。
+实际输入文件、catalog 分类、版本、摘要、记录数量、来源关联、拒绝原因和去重统计见随库 `.wdb.json` 报告；报告不再把所有内容标为 ECDICT。来源概要 SOURCES.txt 随安装包分发。
 
-当前构建结果：
+## 电脑端生成
 
-| 内容 | 词条数 | 字节数 | MiB |
-| --- | ---: | ---: | ---: |
-| 四级独立词库 | 3,849 | 2,165,473 | 2.07 |
-| 完整查询库 | 770,609 | 143,842,129 | 137.18 |
+生成器只依赖 Python 标准库。在本模块目录运行以下命令。输入由开发者提前从上述固定快照取得，正常构建不会下载或转换资源。
 
-完整库排除了两条超过词头长度限制的异常记录，详情见生成报告。当前格式优先直接随机读取，尚未做索引压缩；词频排序及独立词书成员清单尚未接入。
+ECDICT 输入为 ecdict.csv，固定快照的 SHA256 为 `1a6947e04785db63613a92e14903cdae7954f7e84860b10e68e5c7cbb3f9c3cf`。kajweb 输入使用真实 JSON/JSON-lines，或仓库中包含 JSON 的 ZIP；同时提供同快照 bookLists.txt 分类目录。
 
-设备按以下顺序选择词库：
+已核查的 kajweb 文件如下（本地可以按左列重命名）：
 
-1. 应用数据目录的 `library.wdb`：用户导入的词库。
-2. `/sdcard/words/library.wdb`：TF 卡扩展词库。
-3. 应用安装目录中的 `res/library.wdb`：随包备用词库，通过平台解析内部存储或 TF 卡路径。
+| 本地文件 | 仓库路径 |
+| --- | --- |
+| CET4luan_1.zip | book/1523620217431_CET4luan_1.zip |
+| CET4_3.zip | book/1521164643060_CET4_3.zip |
+| CET6_3.zip | book/1521164633851_CET6_3.zip |
+| KaoYan_3.zip | book/1521164658897_KaoYan_3.zip |
+| IELTS_3.zip | book/1521164666922_IELTS_3.zip |
+| TOEFL_3.zip | book/1521164667985_TOEFL_3.zip |
 
-从候选进入详情时继续使用同一个文件和内容标识。词库被替换时要求重新查询，不用旧偏移读取新文件。读取失败时关闭句柄并返回错误，不在后台直接操作页面控件。
-
-当前平台在 TF 拔出时会统一停止动态应用。本模块遵从该流程，学习记录和学习快照保存到应用安装卷。
-安装在内部存储时可重新打开；安装在 TF 卡时，重新插卡并确认加载后恢复入口。随包词书与导入词书路径随安装位置解析，已保存进度随数据目录携带，拔卡时未保存操作可以丢失。
-
-## 调度核心
-
-`core/words_fsrs.c` 不依赖 RTOS、文件系统和 LVGL。输入为旧状态、评分和 UTC 秒，输出为新状态和到期时间。使用 FSRS-6 默认 21 个参数、90% 目标回忆率、60/600 秒学习步骤、600 秒重学步骤、最长 36,500 天，关闭随机微调。时间倒退和无效状态返回失败，不改变输出。
-
-以固定随机序列对照 Py-FSRS：128 条序列、每条 128 次评分，合计 16,384 次转换。比较阶段、学习步骤、到期时间、最后评分时间、稳定性与难度，并检查遗忘次数。此验证针对默认参数，不代表完成了设备端学习队列或 UI 验证。
-
-## 构建和安装
-
-主固件需要包含首批查词版本增加的通用 LVGL 键盘、输入框和文字测量导出。第二版学习接入复用已有导出，没有增加宿主接口；已使用首批兼容固件时，只安装新版单词包即可。SDK 指针仍为 `a25ebcc`，不需要修改 SDK 源码或分区。
-
-只有选择构建单词应用时才需要 Node.js、`sharp` 和词库；平台及其他应用不依赖这些内容。
-在本模块目录执行 `npm install --no-save --package-lock=false sharp`，或通过 `NODE_PATH` 指向已有依赖。
-首次准备随包四级词库时，在本模块目录执行：
+默认安装包携带完整统一词库：保留全部 ECDICT 有效词头，合并上述六份 kajweb 输入。四级的两份文件合并为一个范围。
 
 ```powershell
-python tools/build_dictionary.py <ecdict.csv> output/dictionaries/cet4.wdb --tag cet4
+python tools/build_dictionary.py output/source/ecdict.csv output/dictionaries/unified-full/library.wdb --kajweb output/source/kajweb/CET4luan_1.zip output/source/kajweb/CET4_3.zip output/source/kajweb/CET6_3.zip output/source/kajweb/KaoYan_3.zip output/source/kajweb/IELTS_3.zip output/source/kajweb/TOEFL_3.zip --catalog output/source/kajweb/bookLists.txt
 ```
 
-词库及同目录的 `cet4.wdb.json` 准备完成后，在仓库根目录激活 SDK 环境并显式选择单词应用：
+工具不覆盖已有输出，更新时指定新生成目录。每次同时产生 `library.wdb` 和 `library.wdb.json`。实际使用其他来源快照时，传入 `--revision` 和 `--kajweb-revision`，不要沿用默认版本号。
+
+`tools/scope_map.json` 明确映射 ECDICT tag 与 kajweb catalog tag，例如 ECDICT 的 ky 对应考研，kajweb 的 IELTS 对应雅思。映射根据实际目录建立，不靠文件名猜测；未知标签和异常条目进入报告。不同来源的范围成员取并集，不宣称各来源覆盖面或版本完全一致。
+
+`--include-scopes cet4,cet6` 是电脑端资源裁剪选项：保留这些范围的词条并集和这些范围的索引，不生成多个重复正文库；这不是设备上的多范围组合功能。不传该选项则保留全部有效词头，未属于范围的词仍可离线查词。`--legacy` 只用于生成 WDB1 迁移测试数据。
+
+本次数据规模约为：
+
+| 产物 | 词条 | WDB 容量 | 部署 |
+| --- | ---: | ---: | --- |
+| 完整统一词库 | 770,633 | 213,991,764 字节（204.08 MiB） | 直接随应用安装包，安装到 TF 卡 |
+
+随包词库提供四级、六级、雅思、托福、考研及 ECDICT 中的 GRE、高考、中考范围，安装后即可使用，不需要另行复制扩展库。数量以本次输入快照和生成报告为准，不是考试官方词汇总数。
+
+## 构建、打包与安装
+
+平台与动态应用独立构建。已有兼容固件时只需更新单词应用。本次未新增宿主导出，不需要为词库改造修改 SDK、屏幕驱动或分区。
+
+只有显式构建单词应用时才需要 Node.js、sharp 和预生成词库。入口图标使用 `assets/icon.svg`；在本模块目录执行 `npm install --no-save --package-lock=false sharp`，或让 NODE_PATH 指向已有安装。
+
+在仓库根目录执行：
 
 ```powershell
 . .\SiFli-SDK\export.ps1
@@ -94,7 +120,15 @@ scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu -j8
 scons -C modules APPS=words -j8
 ```
 
-已有配套固件时，只需执行应用构建命令。该命令编译 `words.so`、从 `assets/icon.svg` 生成入口图标，并将四级词库、来源报告和两份许可打包到：
+默认读取 `modules/words/output/dictionaries/unified-full/library.wdb` 及旁边的报告，直接打入安装包。不在每次编译时重新生成。使用另一个预生成产物：
+
+```powershell
+scons -C modules APPS=words WORDS_DICTIONARY=<词库绝对路径.wdb> -j8
+```
+
+同时构建平台和单词包可使用 `scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu APPS=words -j8`。批量应用构建和工厂预装见 [平台与应用构建](../../docs/BUILDING.md)。
+
+标准安装包自动更新到：
 
 ```text
 project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/app-resources/words/
@@ -106,56 +140,45 @@ project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/app-resources/words/
     res/library.wdb.json
     res/LICENSE.ecdict
     res/LICENSE.fsrs
+    res/SOURCES.txt
 ```
 
-源码、图标、清单、词库、报告或许可文件改变后，再次执行 `scons -C modules APPS=words -j8` 会更新这个目录，不需要手动复制安装包。已有词库文件不会在构建时重新从 CSV 转换或从网络下载。
-需要使用其他随包词库时，在仓库根目录执行 `scons -C modules APPS=words WORDS_DICTIONARY=<词库绝对路径.wdb> -j8`，同时提供该词库旁边的 `.wdb.json`；以后构建该词库时继续传入相同参数。
-一次构建平台和单词包时使用 `scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu APPS=words -j8`。
-批量构建见 [平台与应用构建](../../docs/BUILDING.md)。
+仅重新打包已有 words.so 时，在本模块目录执行 `python tools/package_words.py`，使用相同默认词库与标准输出目录。可用 `--firmware`、`--dictionary` 指定输入；`--output` 另存新归档目录。该命令不会编译模块。
 
-把 `app-resources/words` 整个目录复制到 TF 卡的 `apps/words`，通过系统“应用安装”选择安装。
-首次安装选择内部存储或 TF 卡；TF 卡安装目录为 `.epd/apps/words`，与安装包来源目录分开。
-随包词库保留在所选安装目录，学习记录、配置及导入词书使用同卷的 `data/words`。
-安装包不是固件镜像，不能直接交给串口刷写脚本。单词应用默认不加入出厂 `fs_root.bin`，安装它不需要重刷或格式化内部文件系统。
+把整个包复制到 TF 卡 `apps/words`。内部文件系统总量约 5.48 MiB，不能容纳 204.08 MiB 的随包词库，安装步骤根据现有安装位置区分：
 
-仅重新打包已有编译产物时，可以在本模块目录执行 `python tools/package_words.py`，默认也更新当前板级目录的 `app-resources/words`；该命令不编译模块。`--firmware` 可指定其他已构建的固件目录，`--dictionary` 可指定词库，`--output` 仅用于另存到尚不存在的归档目录。
+- 尚未安装：在系统应用安装中选择单词应用，安装位置选 TF 卡。
+- 已安装在 TF 卡：直接“更新应用”，保留已有数据。
+- 已安装在内部 Flash：先退出单词应用，通过系统应用管理卸载，再将新包安装到 TF 卡。平台卸载只删除应用文件和缓存，保留 `/flash/data/words`；如果 TF 卡尚无该应用的数据目录，平台安装后会复制并校验旧数据，再清理已迁移的源数据。不要手动删除 `/flash/data/words`。
 
-仅测试四级查词时使用随包词库即可。需要完整库时，把生成的完整 `library.wdb` 放到 TF 卡 `words` 目录，并保留对应来源报告和许可。
+平台的原位更新不会切换安装卷。如果 TF 卡已经存在 `.epd/data/words`，平台保留 TF 卡中的记录，不自动合并内部 Flash 的另一份记录；需要迁移内部记录时，应在安装前备份并移走 TF 卡上已有的该目录。
 
-模块链接时沿用编译器的浮点 ABI 选择 `libm`，并把需要的双精度辅助函数从 `libgcc` 链入模块。工具链会提示这些库的 `wchar_t` 为 4 字节，而 SDK 模块使用 2 字节；本模块与数学库之间仅传递数值，不传递 `wchar_t`。没有屏蔽该警告，也没有修改 SDK ABI。
+TF 安装目录 `.epd/apps/words` 与安装包来源目录分开，数据与缓存也随卡保存；首次安装时需要同时容纳来源包与安装后的文件。不要把动态应用安装包交给固件串口下载脚本。
 
-## 验证与待办
+默认使用安装包中的 `res/library.wdb`。以前单独部署在应用数据目录或 `/sdcard/words/library.wdb` 的文件仍有更高优先级；部署人员需要同步更新或移走旧替换文件，才能使用新版随包库。用户界面只有查词和学习范围，不增加文件选择入口。
 
-`tests/test_core.py` 对同一份 C 核心执行调度对照、检索、词形歧义、大小写、前缀限制、损坏文件和输入边界测试；可额外抽查真实词库：
+## 测试
 
-```powershell
-python tests/test_core.py --library output/words_core.dll --reference <固定版本Py-FSRS目录> --dictionary output/dictionaries/library.wdb --csv output/source/ecdict.csv
-```
+主机测试使用生产 C 读取器、FSRS、服务和持久化代码；文件系统、内存申请和 RTOS 调度入口由测试替身提供。主机测试不能验证真实抢占、物理拔卡和 LVGL 显示。
 
-Windows 主机测试库使用已有的 Visual Studio 开发命令行构建：
+在 Visual Studio 开发命令行中进入本模块目录，先创建 output 目录，构建测试库：
 
 ```text
-cl /std:c11 /O2 /MT /LD core\words_fsrs.c core\words_dictionary.c /Fo:output\ /Fe:output\words_core.dll /link /EXPORT:words_fsrs_review /EXPORT:words_dictionary_open /EXPORT:words_dictionary_search /EXPORT:words_dictionary_entry
-```
-
-系统内置 MiSans Normal 覆盖四级词库使用的全部音标字符，包括 `U+04D9` 和 `U+0454`；词库原文不作替换。完整词库仍有少量 MiSans 未覆盖的字符（`U+E143`、`U+02B9`、`U+2011`），需要结合词条原文单独核对。
-
-`tests/test_learning.py` 使用生产服务、队列策略和存储代码，文件系统及 RTOS 调度入口由主机测试替身提供。覆盖未评分恢复、重复评分拒绝、跨日额度、复习不受新词额度限制、收藏/暂停独立性、取消收藏后的未学队列、导入空间不足、保存失败重试、多块重载、大小写身份区分、9,217 条记录重载、扩容失败重试和资源释放。该测试没有模拟真实 RTOS 抢占、LittleFS 断电行为或 LVGL 控件绘制。
-
-在 Visual Studio 开发命令行中构建并运行：
-
-```text
-cl /std:c11 /utf-8 /O2 /MT /LD /W4 /D_CRT_SECURE_NO_WARNINGS /Itests\shim /Icore tests\service_harness.c words_store.c core\words_learning.c core\words_fsrs.c core\words_dictionary.c /Fo:output\ /Fe:output\words_learning.dll
+cl /nologo /std:c11 /utf-8 /O2 /MT /LD /W4 /D_CRT_SECURE_NO_WARNINGS core\words_fsrs.c core\words_dictionary.c core\words_content.c /Fo:output\ /Fe:output\words_core.dll /link /EXPORT:words_fsrs_review /EXPORT:words_dictionary_open /EXPORT:words_dictionary_search /EXPORT:words_dictionary_entry /EXPORT:words_dictionary_entry_size /EXPORT:words_dictionary_read_entry /EXPORT:words_entry_parse /EXPORT:words_entry_text /EXPORT:words_dictionary_scope /EXPORT:words_dictionary_member /EXPORT:words_dictionary_find /EXPORT:words_dictionary_word /EXPORT:words_dictionary_unchanged
+cl /nologo /std:c11 /utf-8 /O2 /MT /LD /W4 /D_CRT_SECURE_NO_WARNINGS /Itests\shim /Icore tests\service_harness.c words_result.c words_store.c core\words_learning.c core\words_fsrs.c core\words_dictionary.c core\words_content.c /Fo:output\ /Fe:output\words_learning.dll
+python tests/test_core.py --library output/words_core.dll --reference <上述固定版本Py-FSRS目录>
+python tests/test_unified.py --library output/words_core.dll --dictionary output/dictionaries/unified-full/library.wdb
 python tests/test_learning.py --library output/words_learning.dll
 ```
 
+覆盖内容包括：跨来源补充与去重、音标/释义/例句/短语、范围去重、大小写身份、索引重排后进度、配置与旧内容迁移、未评分恢复、跨范围到期复习、损坏文件、读取/分配/保存失败、取消任务、卡不可用与重新加载、退出资源释放。FSRS 对照固定 Py-FSRS 的 128×128 次状态转换，共 16,384 次。全量 WDB 的 770,633 个词条经过 C 读取与格式化检查。
+
 上板验证：
 
-1. 安装更新后检查首页与系统“应用设置”入口；调整额度后退出重进。
-2. 连续评分、快速重复点击、评分后立即返回，检查只计一次并能恢复。
-3. 展开答案、进入完整释义再返回，检查展开状态和页面切换全刷；同页答案与换词仍走平台局刷策略。
-4. 收藏和移除单词、暂停和恢复学习、切换词书，检查旧进度不被清空。
-5. 导入词书时返回、空间不足、TF 拔出后重新插卡加载，检查已经保存的学习数据和已导入内容仍可读。
-6. 长时间停留不操作，检查没有页面轮询重绘；退出后检查模块与 RAM1 内存回收。
+1. 分别验证 TF 卡原位升级和内部 Flash 转移到 TF 卡，确认额度、未评分词、收藏、暂停和到期复习保留。
+2. 查找同词并进入学习及完整详情，检查音标、例句和短语；切换四级与六级，检查重叠词不重新算新词。
+3. 退出应用后替换扩展词库，重新进入，检查相同单词仍关联原进度。
+4. 查词、进入详情和评分过程中快速返回；TF 卡移除后重新插入加载，检查无旧回调、无文件句柄遗留。
+5. 长时间停留不操作、反复进出详情，检查没有轮询重绘，退出后动态内存回收。
 
-尚未实现词频排序、相邻多词预读和音标补充字形。当前默认 FSRS 参数固定，设置页仅开放每日额度和词书选择。主机测试和模块编译不等同于已通过上述上板验证。
+模块链接沿用固件浮点 ABI，数学库的 wchar_t 4 字节与 SDK 2 字节警告仍保留；模块与数学库不传递 wchar_t。主机测试通过和编译成功不等同于完成上板验证。

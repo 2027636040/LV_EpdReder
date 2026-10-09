@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #define STORAGE_PATH_MAX 512
-#define STORAGE_FLASH 0
+typedef enum { STORAGE_FLASH, STORAGE_SD, STORAGE_COUNT } storage_volume_t;
 #define STORAGE_FLASH_APPS "/flash/apps"
 #define STORAGE_SD_APPS "/sdcard/.epd/apps"
 typedef enum { STORAGE_APP_CODE, STORAGE_APP_DATA, STORAGE_APP_CACHE } storage_app_area_t;
@@ -23,6 +23,8 @@ void storage_lock(void);
 void storage_unlock(void);
 bool storage_available(int volume);
 bool storage_path_available(const char *path);
+uint32_t storage_card_session(void);
+bool storage_session_valid(storage_volume_t volume, uint32_t session);
 bool storage_mkdirs(const char *path);
 bool storage_app_available(const char *id);
 const char *storage_path_root(const char *path);

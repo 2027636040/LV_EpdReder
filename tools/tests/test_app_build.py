@@ -99,6 +99,24 @@ class AppBuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'cet4.wdb.json'):
             native_apps.add_words_package(self.env, self.root, self.root, dictionary=dictionary)
 
+    def test_words_packages_prebuilt_unified_dictionary_and_provenance(self):
+        module = self.root / 'modules/words'
+        dictionary = module / 'output/dictionaries/unified-full/library.wdb'
+        dictionary.parent.mkdir(parents=True)
+        dictionary.touch()
+        report = dictionary.with_suffix('.wdb.json')
+        report.touch()
+        with patch.object(native_apps, 'add_package', return_value='words package') as package:
+            self.assertEqual(native_apps.add_words_package(self.env, self.root, self.root), 'words package')
+            resources = package.call_args.args[-1]
+            self.assertEqual(resources['library.wdb'], dictionary)
+            self.assertEqual(resources['library.wdb.json'], report)
+            self.assertEqual(resources['SOURCES.txt'], module / 'SOURCES.txt')
+            self.assertIn('LICENSE.ecdict', resources)
+            self.assertIn('LICENSE.fsrs', resources)
+        # Only the independent icon action is added; dictionary conversion is not a build action.
+        self.assertEqual(len(self.env.commands), 1)
+
     def test_filesystem_depends_only_on_selected_packages(self):
         contents = self.root / 'disk'
         contents.mkdir()

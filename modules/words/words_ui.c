@@ -76,7 +76,7 @@ static void lookup_poll(lv_timer_t *timer)
     lv_timer_pause(timer);
     page->request = 0;
     lv_obj_remove_state(page->search, LV_STATE_DISABLED);
-    epd_app_free(page->displayed);
+    words_result_free(page->displayed);
     page->displayed = result;
     if (!result || result->error[0])
     {
@@ -203,7 +203,7 @@ void words_lookup_message(gui_app_msg_type_t message, void *parameter)
     else if (message == GUI_APP_MSG_ONSTOP)
     {
         lv_timer_delete(page->timer);
-        epd_app_free(page->displayed);
+        words_result_free(page->displayed);
     }
 }
 
@@ -254,6 +254,8 @@ static void detail_turn(lv_event_t *event)
         if (page->end >= strlen(page->text)) return;
         if (page->page == page->history_capacity)
         {
+            if (page->history_capacity > UINT32_MAX / 2 || page->history_capacity > SIZE_MAX / sizeof(size_t) / 2)
+            { epd_app_text(page->status, "内容页数超出范围"); return; }
             unsigned capacity = page->history_capacity ? page->history_capacity * 2 : 16;
             size_t *history = epd_app_alloc(capacity * sizeof(*history), EPD_APP_PSRAM);
             if (!history) { epd_app_text(page->status, "内存不足"); return; }
@@ -279,25 +281,29 @@ static void detail_poll(lv_timer_t *timer)
     if (!result || result->error[0])
     {
         epd_app_text(page->status, result ? result->error : "内存不足");
-        epd_app_free(result);
+        words_result_free(result);
         return;
     }
-    epd_app_free(page->displayed);
+    bool same_content = page->displayed && page->displayed->content_size == result->content_size &&
+        !memcmp(page->displayed->content, result->content, result->content_size);
+    words_result_free(page->displayed);
     page->displayed = result;
     page->job.slot = result->slot;
     epd_app_text(lv_obj_get_child(page->collect, 0), (result->flags & WORDS_COLLECTED) ? "移出生词本" : "加入生词本");
     epd_app_text(lv_obj_get_child(page->pause, 0), (result->flags & WORDS_PAUSED) ? "恢复学习" : "暂停学习");
     visible(page->collect, true); visible(page->pause, true);
     epd_app_text(page->status, "");
-    if (page->text) return;
+    if (page->text && same_content) return;
+    epd_app_free(page->text); page->text = NULL;
+    epd_app_free(page->history); page->history = NULL;
+    page->offset = page->end = 0; page->page = page->history_capacity = 0;
     epd_app_text(page->word, result->fields[WORDS_WORD]);
     epd_app_text(page->phonetic, result->fields[WORDS_PHONETIC]);
-    size_t length = strlen(result->fields[WORDS_TRANSLATION]) + strlen(result->fields[WORDS_DEFINITION]) +
-                    strlen(result->fields[WORDS_EXCHANGE]) + 8;
+    size_t length = words_entry_text(&result->view, WORDS_TEXT_DETAIL, NULL, 0);
+    if (!length) { epd_app_text(page->status, "词条格式错误"); return; }
     page->text = epd_app_alloc(length, EPD_APP_PSRAM);
     if (!page->text) { epd_app_text(page->status, "内存不足"); return; }
-    snprintf(page->text, length, "%s\n\n%s\n\n%s", result->fields[WORDS_TRANSLATION],
-             result->fields[WORDS_DEFINITION], result->fields[WORDS_EXCHANGE]);
+    words_entry_text(&result->view, WORDS_TEXT_DETAIL, page->text, length);
     epd_app_text(page->status, "");
     detail_render(page);
 }
@@ -364,7 +370,7 @@ static void detail_message(gui_app_msg_type_t message, void *parameter)
         lv_timer_delete(page->timer);
         epd_app_free(page->text);
         epd_app_free(page->history);
-        epd_app_free(page->displayed);
+        words_result_free(page->displayed);
     }
 }
 
