@@ -10,13 +10,13 @@
  * 链路：手机配对连接（ACL/加密）→ 延迟发起 PAN 连接（手机作 NAP）
  *       → PAN 连通后设备获得网络出口。
  *
- * 稳定性：配对过的设备断线后自动恢复可连接状态并周期重连（10s × 6 次）；
- *         重连定时器同时会复位挂起的连接请求，避免事件丢失后卡死。
+ * Reconnection is executed by the SDK connection manager. The application
+ * retries an idle manager every 10 seconds, up to six attempts.
  *
  * 注意：对外符号统一使用 btpan_ 前缀（SDK 已占用 bt_pan_ 前缀）。
  */
 #include "bt_pan.h"
-#include "pan_time.h"
+#include "network.h"
 
 #include <string.h>
 #include <rthw.h>
@@ -48,6 +48,7 @@ typedef enum
     PAN_MSG_STACK_READY = 1, /* 蓝牙协议栈初始化完成 */
     PAN_MSG_CONNECT_PAN = 2, /* 发起 PAN 连接（由定时器/外部请求触发） */
     PAN_MSG_APPLY_ENABLED = 3, /* 在工作线程应用蓝牙开关 */
+    PAN_MSG_RECONNECT = 4,
 } pan_msg_t;
 
 /*---------------------------------------------------------------------------*/
@@ -68,7 +69,6 @@ typedef struct
     rt_uint8_t reconnect_attempts;
     rt_thread_t worker;
     char local_name[PAN_LOCAL_NAME_MAX];
-    btpan_event_cb_t event_cb;
     btpan_state_t last_state;
 } btpan_service_t;
 
@@ -102,9 +102,7 @@ static void btpan_notify_state(void)
         return;
 
     g_pan.last_state = state;
-    pan_time_set_link(state == BTPAN_STATE_NETWORK_READY);
-    if (g_pan.event_cb != RT_NULL)
-        g_pan.event_cb(state);
+    network_changed();
 }
 
 /*---------------------------------------------------------------------------*/
@@ -187,11 +185,12 @@ static void btpan_start_timer(void)
 static void btpan_reconnect_timeout(void *parameter)
 {
     (void)parameter;
+    btpan_post(PAN_MSG_RECONNECT);
+}
 
-    /* 事件丢失保护：复位挂起标志，允许重新发起 */
-    g_pan.connect_pending = RT_FALSE;
-
-    if (!g_pan.enabled || !btpan_has_peer_addr())
+static void btpan_reconnect(void)
+{
+    if (!g_pan.enabled || !g_pan.stack_ready || !btpan_has_peer_addr())
         return;
 
     if (g_pan.bt_connected || g_pan.pan_connected)
@@ -204,11 +203,14 @@ static void btpan_reconnect_timeout(void *parameter)
         return;
     }
 
-    g_pan.reconnect_attempts++;
-    LOG_I("pan reconnect attempt %d/%d", g_pan.reconnect_attempts, PAN_RECONNECT_MAX);
-
-    /* 重新建立链路并连接 PAN（对已配对地址） */
-    bt_interface_conn_ext((char *)&g_pan.bd_addr, BT_PROFILE_PAN);
+    BTS2S_BD_ADDR address;
+    bt_addr_convert_to_bts((bd_addr_t *)&g_pan.bd_addr, &address);
+    bt_cm_err_t result = bt_cm_connect_req(&address, BT_LINK_PHONE);
+    /* The manager owns an existing link or its pending automatic reconnect. */
+    if (result == BT_CM_ERR_CONN_EXISTED) return;
+    ++g_pan.reconnect_attempts;
+    LOG_I("pan reconnect attempt %d/%d, result=%d",
+          g_pan.reconnect_attempts, PAN_RECONNECT_MAX, result);
 }
 
 static void btpan_stop_reconnect(void)
@@ -424,11 +426,26 @@ void btpan_get_local_addr(char *buf, rt_size_t len)
 /*---------------------------------------------------------------------------*/
 /* 工作线程 */
 /*---------------------------------------------------------------------------*/
+static void btpan_connect_profile(void)
+{
+    if (!g_pan.enabled || !g_pan.stack_ready || !g_pan.bt_connected || g_pan.pan_connected) return;
+    BTS2S_BD_ADDR address;
+    bt_addr_convert_to_bts((bd_addr_t *)&g_pan.bd_addr, &address);
+    bts2_pan_inst_data *pan = getApp()->pan_inst_ptr;
+    for (unsigned i = 0; i < PAN_MAX_NUM; ++i)
+    {
+        bts2_pan_info_t *peer = &pan->pan_info_list[i];
+        if (peer->is_use && bd_eq(&peer->bd_addr, &address) &&
+            peer->state != PAN_DEV_DISCONNECTED_ST) return;
+    }
+    /* Incoming ACL links may have no profile event to start the PAN target. */
+    bt_cm_profile_connect(BT_CM_PAN, &address, BT_LINK_PHONE);
+}
+
 static void btpan_apply_enabled(void)
 {
 #ifdef BSP_BT_CONNECTION_MANAGER
-    /* addFlag=0 replaces the target mask; it does not remove the given bits. */
-    bt_cm_set_profile_target(g_pan.enabled ? BT_CM_PAN : 0, BT_LINK_PHONE, g_pan.enabled ? 1 : 0);
+    bt_cm_set_profile_target(g_pan.enabled ? BT_CM_PAN : 0, BT_LINK_PHONE, 0);
 #endif
     if (g_pan.stack_ready)
         bt_interface_set_scan_mode(g_pan.enabled, g_pan.enabled);
@@ -493,8 +510,11 @@ static void btpan_worker_entry(void *parameter)
 
         case PAN_MSG_CONNECT_PAN:
             g_pan.connect_pending = RT_FALSE;
-            if (g_pan.enabled && g_pan.stack_ready && g_pan.bt_connected)
-                bt_interface_conn_ext((char *)&g_pan.bd_addr, BT_PROFILE_PAN);
+            btpan_connect_profile();
+            break;
+
+        case PAN_MSG_RECONNECT:
+            btpan_reconnect();
             break;
 
         case PAN_MSG_APPLY_ENABLED:
@@ -533,9 +553,7 @@ rt_err_t btpan_init(const char *device_name)
     g_pan.last_state = BTPAN_STATE_OFF;
 
 #ifdef BSP_BT_CONNECTION_MANAGER
-    /* 将 PAN 加入“手机类设备”的目标 profile 集合：
-       手机（重新）连接后，连接管理器会在合适时机自动拉起 PAN 连接 */
-    bt_cm_set_profile_target(BT_CM_PAN, BT_LINK_PHONE, 1);
+    bt_cm_set_profile_target(BT_CM_PAN, BT_LINK_PHONE, 0);
 #endif
 
     LOG_I("btpan init: %s", g_pan.local_name);
@@ -558,10 +576,6 @@ rt_err_t btpan_init(const char *device_name)
     }
 
     g_pan.initialized = RT_TRUE;
-
-    rt_err_t time_result = pan_time_init();
-    if (time_result != RT_EOK)
-        LOG_W("PAN time service init failed: %d", time_result);
 
     bt_interface_register_bt_event_notify_callback(btpan_bt_event_handle);
     rt_thread_startup(g_pan.worker);
@@ -631,9 +645,4 @@ bool btpan_is_connected(void)
 bool btpan_is_network_ready(void)
 {
     return btpan_get_state() == BTPAN_STATE_NETWORK_READY;
-}
-
-void btpan_set_event_cb(btpan_event_cb_t cb)
-{
-    g_pan.event_cb = cb;
 }

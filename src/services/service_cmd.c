@@ -29,10 +29,8 @@
 #include "lwip/dhcp.h"
 #include "lwip/dns.h"
 
-#include "weather.h"
+#include "app_service.h"
 #include "bt_pan.h"
-#include "bookshelf.h"
-#include "services/reader/reader.h"
 
 #define DBG_TAG "svc.cmd"
 #define DBG_LVL DBG_INFO
@@ -41,19 +39,6 @@
 /*---------------------------------------------------------------------------*/
 /* 小工具 */
 /*---------------------------------------------------------------------------*/
-static const char *weather_state_name(weather_state_t st)
-{
-    switch (st)
-    {
-    case WEATHER_STATE_IDLE:       return "空闲";
-    case WEATHER_STATE_REFRESHING: return "更新中";
-    case WEATHER_STATE_UPDATED:    return "已更新";
-    case WEATHER_STATE_CACHED:     return "缓存数据";
-    case WEATHER_STATE_FAILED:     return "失败";
-    default:                       return "?";
-    }
-}
-
 static const char *pan_state_name(btpan_state_t st)
 {
     switch (st)
@@ -68,87 +53,8 @@ static const char *pan_state_name(btpan_state_t st)
 }
 
 /*---------------------------------------------------------------------------*/
-/* weather 子命令 */
+/* 动态应用命令由 app_service 转发 */
 /*---------------------------------------------------------------------------*/
-static void print_weather_snapshot(void)
-{
-    weather_info_t w;
-    int i;
-
-    weather_get_info(&w);
-
-    rt_kprintf("========== 天气快照 ==========\n");
-    rt_kprintf("有效    : %s\n", w.valid ? "是" : "否");
-    rt_kprintf("状态    : %s\n", weather_state_name(w.state));
-    rt_kprintf("状态描述: %s\n", w.status);
-    rt_kprintf("城市    : %s\n", w.city);
-    rt_kprintf("更新时间: %s\n", w.update_time);
-    rt_kprintf("实况    : %s (%d) %d℃  体感 %d℃  今日 %d~%d℃\n",
-               w.text, w.code, w.temperature, w.feels_like, w.low, w.high);
-    rt_kprintf("详情    : 湿度 %d%% | %s %d级 %dkm/h | 能见度 %dkm | 气压 %dhPa | 云量 %d%%\n",
-               w.humidity, w.wind_dir, w.wind_scale, w.wind_speed,
-               w.visibility, w.pressure, w.cloud);
-    if (w.aqi >= 0)
-        rt_kprintf("空气    : 空气质量 %d %s | 日出 %s | 日落 %s\n",
-                   w.aqi, w.aqi_category, w.sunrise, w.sunset);
-    else
-        rt_kprintf("空气    : 空气质量 -- | 日出 %s | 日落 %s\n",
-                   w.sunrise, w.sunset);
-
-    for (i = 0; i < w.forecast_count; i++)
-    {
-        const weather_forecast_t *f = &w.forecast[i];
-        rt_kprintf("预报%d   : %s %s (%d) %d~%d℃  %s %d级\n",
-                   i, f->date, f->text, f->code, f->low, f->high, f->wind_dir, f->wind_scale);
-    }
-    rt_kprintf("======================================\n");
-}
-
-static void cmd_weather_status(int argc, char **argv)
-{
-    (void)argc;
-    (void)argv;
-    print_weather_snapshot();
-    weather_result_t job;
-    weather_get_result(&job);
-    rt_kprintf("任务 %u: %s %s\n", (unsigned)job.ticket,
-               job.busy ? "执行中" : "已结束", job.message);
-}
-
-static void cmd_weather_refresh(int argc, char **argv)
-{
-    rt_err_t ret;
-
-    (void)argc;
-    (void)argv;
-
-    ret = weather_request_refresh();
-    if (ret != RT_EOK)
-    {
-        rt_kprintf("request failed (%d), service not ready?\n", ret);
-        return;
-    }
-
-    rt_kprintf("refresh queued; use 'svc weather status' to check the result\n");
-}
-
-static void cmd_weather_city(int argc, char **argv)
-{
-    if (argc < 2)
-    {
-        weather_config_t cfg;
-        weather_get_config(&cfg);
-        rt_kprintf("current city: %s (%s)\n", cfg.city, cfg.city_id);
-        rt_kprintf("usage: svc weather city <numeric LocationID>\n");
-        return;
-    }
-
-    if (weather_set_city(argv[1]) != RT_EOK)
-        rt_kprintf("city request rejected (invalid ID or service busy)\n");
-    else
-        rt_kprintf("city validation queued; setting changes only after successful lookup and save\n");
-}
-
 /*---------------------------------------------------------------------------*/
 /* pan 子命令 */
 /*---------------------------------------------------------------------------*/
@@ -214,181 +120,6 @@ static void cmd_pan_ip(int argc, char **argv)
 }
 
 /*---------------------------------------------------------------------------*/
-/* bookshelf 子命令 */
-/*---------------------------------------------------------------------------*/
-static void cmd_bs_list(int argc, char **argv)
-{
-    bookshelf_item_t item;
-    int i;
-    int n;
-
-    (void)argc;
-    (void)argv;
-
-    n = bookshelf_refresh();
-    rt_kprintf("bookshelf \"%s\": %d book(s)\n", bookshelf_dir(), n);
-
-    for (i = 0; i < n; i++)
-    {
-        if (bookshelf_get(i, &item))
-        {
-            rt_kprintf("  [%d] %-32s %u bytes  progress %d%%\n",
-                       i, item.name, (unsigned)item.size, item.progress);
-        }
-    }
-}
-
-/*---------------------------------------------------------------------------*/
-/* reader 子命令 */
-/*---------------------------------------------------------------------------*/
-static int reader_get_len_arg(int argc, char **argv, int arg_index)
-{
-    int len = 512;
-
-    if (argc > arg_index)
-    {
-        len = atoi(argv[arg_index]);
-        if (len < 16)
-            len = 16;
-        if (len > 2048)
-            len = 2048;
-    }
-
-    return len;
-}
-
-static void cmd_rd_open(int argc, char **argv)
-{
-    rt_err_t ret;
-
-    if (argc < 2)
-    {
-        rt_kprintf("usage: svc reader open <path>\n");
-        return;
-    }
-
-    ret = reader_open(argv[1]);
-    rt_kprintf("open \"%s\": %s\n", argv[1], (ret == RT_EOK) ? "ok" : "FAILED");
-}
-
-static void cmd_rd_info(int argc, char **argv)
-{
-    reader_info_t info;
-
-    (void)argc;
-    (void)argv;
-
-    if (!reader_get_info(&info))
-    {
-        rt_kprintf("no book opened (svc reader open <path>)\n");
-        return;
-    }
-
-    rt_kprintf("title    : %s\n", info.title);
-    rt_kprintf("path     : %s\n", info.path);
-    rt_kprintf("size     : %u bytes\n", (unsigned)info.file_size);
-    rt_kprintf("encoding : %s\n", info.encoding);
-    rt_kprintf("position : %u (%d%%)\n", (unsigned)info.position, reader_get_percent());
-}
-
-static void cmd_rd_read(int argc, char **argv)
-{
-    uint32_t offset;
-    uint32_t next = 0;
-    int len;
-    char *buf;
-    int n;
-
-    if (!reader_is_open())
-    {
-        rt_kprintf("no book opened (svc reader open <path>)\n");
-        return;
-    }
-
-    offset = (argc > 1) ? (uint32_t)strtoul(argv[1], RT_NULL, 0) : reader_get_position();
-    len = reader_get_len_arg(argc, argv, 2);
-
-    buf = rt_malloc((rt_size_t)len + 1);
-    if (buf == RT_NULL)
-    {
-        rt_kprintf("no memory\n");
-        return;
-    }
-
-    n = reader_read_text(offset, buf, (rt_size_t)len + 1, &next);
-    if (n < 0)
-    {
-        rt_kprintf("read failed (%d)\n", n);
-    }
-    else
-    {
-        rt_kprintf("---- read @%u, %d bytes, next %u ----\n",
-                   (unsigned)offset, n, (unsigned)next);
-        rt_kprintf("%s\n", buf);
-        rt_kprintf("---- end ----\n");
-    }
-
-    rt_free(buf);
-}
-
-static void cmd_rd_next(int argc, char **argv)
-{
-    int len;
-    char *buf;
-    int n;
-
-    if (!reader_is_open())
-    {
-        rt_kprintf("no book opened (svc reader open <path>)\n");
-        return;
-    }
-
-    len = reader_get_len_arg(argc, argv, 1);
-
-    buf = rt_malloc((rt_size_t)len + 1);
-    if (buf == RT_NULL)
-    {
-        rt_kprintf("no memory\n");
-        return;
-    }
-
-    n = reader_read_next(buf, (rt_size_t)len + 1);
-    if (n < 0)
-    {
-        rt_kprintf("read failed (%d)\n", n);
-    }
-    else
-    {
-        rt_kprintf("---- read %d bytes, position now %u (%d%%) ----\n",
-                   n, (unsigned)reader_get_position(), reader_get_percent());
-        rt_kprintf("%s\n", buf);
-        rt_kprintf("---- end ----\n");
-    }
-
-    rt_free(buf);
-}
-
-static void cmd_rd_seek(int argc, char **argv)
-{
-    if (argc < 2)
-    {
-        rt_kprintf("usage: svc reader seek <offset>\n");
-        return;
-    }
-
-    reader_set_position((uint32_t)strtoul(argv[1], RT_NULL, 0));
-    rt_kprintf("position: %u (%d%%)\n", (unsigned)reader_get_position(), reader_get_percent());
-}
-
-static void cmd_rd_close(int argc, char **argv)
-{
-    (void)argc;
-    (void)argv;
-    reader_close();
-    rt_kprintf("closed\n");
-}
-
-/*---------------------------------------------------------------------------*/
 /* 命令表（风格参考 rt_bt_app_cmd.c） */
 /*---------------------------------------------------------------------------*/
 typedef struct
@@ -405,13 +136,6 @@ typedef struct
     rt_size_t cmd_num;
 } svc_group_t;
 
-static const svc_cmd_t weather_cmds[] =
-{
-    { "status",  "print weather snapshot",           cmd_weather_status },
-    { "refresh", "request refresh and wait result",  cmd_weather_refresh },
-    { "city",    "show/set city: city [LocationID]",  cmd_weather_city },
-};
-
 static const svc_cmd_t pan_cmds[] =
 {
     { "status",  "print pan state",                  cmd_pan_status },
@@ -421,27 +145,9 @@ static const svc_cmd_t pan_cmds[] =
     { "ip",      "show PAN netif IP address (DHCP)", cmd_pan_ip },
 };
 
-static const svc_cmd_t bookshelf_cmds[] =
-{
-    { "list",    "scan and list books in TF card root", cmd_bs_list },
-};
-
-static const svc_cmd_t reader_cmds[] =
-{
-    { "open",    "open book: open <path>",           cmd_rd_open },
-    { "info",    "current book info",                cmd_rd_info },
-    { "read",    "read: read [offset] [len]",        cmd_rd_read },
-    { "next",    "read from position: next [len]",   cmd_rd_next },
-    { "seek",    "set position: seek <offset>",      cmd_rd_seek },
-    { "close",   "close book",                       cmd_rd_close },
-};
-
 static const svc_group_t g_groups[] =
 {
-    { "weather",   weather_cmds,   sizeof(weather_cmds) / sizeof(weather_cmds[0]) },
     { "pan",       pan_cmds,       sizeof(pan_cmds) / sizeof(pan_cmds[0]) },
-    { "bookshelf", bookshelf_cmds, sizeof(bookshelf_cmds) / sizeof(bookshelf_cmds[0]) },
-    { "reader",    reader_cmds,    sizeof(reader_cmds) / sizeof(reader_cmds[0]) },
 };
 
 #define SVC_GROUP_COUNT (sizeof(g_groups) / sizeof(g_groups[0]))
@@ -476,6 +182,11 @@ static void svc(int argc, char **argv)
 
     if (grp == RT_NULL)
     {
+        if (!strcmp(argv[1], "bookshelf") || !strcmp(argv[1], "reader"))
+        {
+            if (app_service_command("books", argc - 1, argv + 1) == RT_EOK) return;
+        }
+        if (app_service_command(argv[1], argc - 2, argv + 2) == RT_EOK) return;
         rt_kprintf("svc: unknown service \"%s\" (try \"svc\")\n", argv[1]);
         return;
     }

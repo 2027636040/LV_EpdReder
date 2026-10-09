@@ -2,6 +2,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const sharp = require('sharp');
+const weatherPrivate = new Set(['weather', 'location', 'humidity', 'wind', 'visibility',
+    'cloud', 'sunrise', 'sunset', 'pressure', 'air']);
 const root = path.resolve(__dirname, '..');
 const icons = [
     ['bookshelf', '书架.svg', 80], ['weather', '天气.svg', 80],
@@ -37,7 +39,7 @@ async function main() {
         }
         await sharp(data, {raw: {width: size, height: size, channels: 4}})
             .png().toFile(path.join(out, `ui_icon_${name}.png`));
-        header += `extern const lv_image_dsc_t ui_icon_${name};\n`;
+        if (!weatherPrivate.has(name)) header += `extern const lv_image_dsc_t ui_icon_${name};\n`;
     }
     fs.writeFileSync(path.join(root, 'src/ui/icons/ui_icons.h'), header + '#endif\n');
     console.log(`Prepared ${icons.length} transparent PNG icons for EZIP`);

@@ -26,8 +26,6 @@ typedef enum
     MSG_DRAW_LOW_POWER_PAGE,    /* 电量过低，绘制低电量页        */
     MSG_DRAW_CHARGE_PAGE,       /* 充电中（低电恢复），绘制充电页 */
     MSG_DRAW_WELCOME_PAGE,      /* 电量恢复，绘制欢迎页          */
-    MSG_UPDATE_CHARGE_STATUS,   /* 充电状态变化                  */
-    MSG_BATTERY_CHECK,          /* 电量巡检（由电池定时器投递）  */
 } UIAction;
 
 /* 动作回调：输入源（按键等）向应用分发动作 */

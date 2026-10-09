@@ -3,6 +3,7 @@
 #include "lvgl.h"
 
 bool ui_font_init(void);
+const void *ui_font_builtin_data(size_t *size);
 const lv_font_t *ui_font_small(void);
 const lv_font_t *ui_font_body(void);
 const lv_font_t *ui_font_title(void);

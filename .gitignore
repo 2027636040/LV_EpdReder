@@ -2,7 +2,17 @@
 project/build_*/
 project/.sconsign.dblite
 project/sf-pkgs/
+project/.sf-pkg/*
+!project/.sf-pkg/conan.lock
 project/__pycache__/
+project/rtua.py
+modules/*/output/
+modules/*/.sconsign.dblite
+modules/*/codecs/*/output/
+modules/*/codecs/*/.sconsign.dblite
+modules/*/codecs/*/output-*.log
+modules/*/codecs/*/tests/*.rsp
+modules/*/formats/tests/build/
 
 # Build artifacts (in-source objects)
 *.o

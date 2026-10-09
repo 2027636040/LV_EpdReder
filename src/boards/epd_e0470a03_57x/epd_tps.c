@@ -198,12 +198,10 @@ rt_err_t tps_enter_sleep(void)
     return RT_EOK;
 }
 
-rt_err_t tps_exit_sleep(void)
+void tps_exit_sleep(void)
 {
     rt_pin_write(EPD_TPS_PWRUP_PIN, 1);
     rt_thread_mdelay(50);
     rt_pin_write(EPD_TPS_PWRCOM_PIN, 1);
     rt_thread_mdelay(10);
-
-    return RT_EOK;
 }

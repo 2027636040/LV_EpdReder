@@ -6,6 +6,9 @@
  * 排除了原 C++ 版本中的渲染器/字体/UI 装配逻辑（LVGL 路线由 SDK lv_lcd 接管）。
  */
 #include "board_service.h"
+#include "board_sdcard.h"
+#include "storage.h"
+#include "app_service.h"
 
 #include <string.h>
 
@@ -98,75 +101,9 @@ void board_power_up(void)
 
 void board_start_filesystem(void)
 {
-    LOG_I("board_start_filesystem");
-#ifndef _WIN32
-#ifndef FS_REGION_START_ADDR
-    LOG_E("Need to define file system start address!");
-#endif
-
-    char *name[2];
-
-    LOG_I("===auto_mnt_init===");
-
-    memset(name, 0, sizeof(name));
-
-#ifdef RT_USING_SDIO
-    /* 等待 SD 卡检测完成 */
-    int sd_state = mmcsd_wait_cd_changed(3000);
-    if (MMCSD_HOST_PLUGED == sd_state)
-    {
-        LOG_I("SD-Card plug in");
-#ifdef BSP_USING_SDMMC2
-        name[0] = (char *)"sd1";
-#else
-        name[0] = (char *)"sd0";
-#endif
-    }
-    else
-    {
-        LOG_E("No SD-Card detected, state: %d", sd_state);
-    }
-#endif /* RT_USING_SDIO */
-
-#if defined(RT_USING_SPI_MSD)
-    {
-        uint16_t time_out = 100;
-        LOG_I("Waitting for SD Card detection done...");
-        while (time_out--)
-        {
-            rt_thread_mdelay(30);
-            if (rt_device_find("sd0"))
-            {
-                LOG_I("Found SD-Card");
-                name[0] = (char *)"sd0";
-                break;
-            }
-        }
-    }
-#endif
-
-    name[1] = (char *)"flash0";
-    register_mtd_device(FS_REGION_START_ADDR, FS_REGION_SIZE, name[1]);
-
-    for (uint32_t i = 0; i < sizeof(name) / sizeof(name[0]); i++)
-    {
-        if (NULL == name[i])
-        {
-            continue;
-        }
-
-        if (dfs_mount(name[i], "/", "elm", 0, 0) == 0) /* 挂载成功即停止 */
-        {
-            LOG_I("mount fs on %s to root success", name[i]);
-            break;
-        }
-        else
-        {
-            LOG_E("mount fs on %s to root fail", name[i]);
-        }
-    }
-
-#endif /* _WIN32 */
+    /* LCD initialization can repurpose PA11 as a backlight pin. */
+    board_sdcard_prepare();
+    storage_init();
 }
 
 void board_sleep_filesystem(void)
@@ -195,6 +132,11 @@ void board_wakeup_filesystem(void)
 
 void board_prepare_to_sleep(void)
 {
+    if (!app_service_flush())
+    {
+        LOG_W("power-off deferred: application data could not be saved");
+        return;
+    }
 #ifdef RT_USING_SPI_MSD
     SD_card_power_off();
 #endif

@@ -3,7 +3,7 @@
 #include "ui_settings.h"
 #include <stdint.h>
 
-/* Application-thread-only storage; two independent NOR sectors. */
+/* Application-thread-only settings; atomic LittleFS record replacement. */
 bool ui_settings_store_load(uint8_t values[UI_SETTING_COUNT]);
 bool ui_settings_store_save(const uint8_t values[UI_SETTING_COUNT]);
 #endif

@@ -1,6 +1,7 @@
 #include "ui_settings.h"
 #include "ui_settings_store.h"
 #include "bt_pan.h"
+#include "network.h"
 #include "boards/epd_e0470a03_57x/epd_waveform.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -8,7 +9,7 @@
 static const char *const timeouts[] = {"1 分钟", "3 分钟", "5 分钟", "10 分钟", "15 分钟"};
 static const char *const refresh_cycles[] = {"每次", "5 次", "8 次", "10 次", "15 次", "20 次"};
 static const unsigned refresh_counts[] = {1, 5, 8, 10, 15, 20};
-static const char *const networks[] = {"WiFi", "BLE-PAN"};
+static const char *const networks[] = {"自动", "PAN", "WiFi"};
 static const char *const fonts[] = {"Default", "Song", "Hei", "Kai", "Monospace"};
 static const char *const font_sizes[] = {"16 px", "18 px", "20 px", "22 px", "24 px", "28 px", "32 px", "36 px"};
 static const char *const font_weights[] = {"正常", "粗体", "细体"};
@@ -79,16 +80,11 @@ void ui_settings_init(void)
     selected[UI_SETTING_BLUETOOTH] = ui_settings_enabled(UI_SETTING_BLUETOOTH);
     if (ui_settings_store_load(saved))
     {
-        bool valid = true;
-        for (unsigned i = 0; i < UI_SETTING_COUNT; ++i)
-            if (saved[i] >= settings[i].option_count) valid = false;
-        if (valid)
-        {
-            for (unsigned i = 0; i < UI_SETTING_COUNT; ++i) selected[i] = saved[i];
-            btpan_enable(selected[UI_SETTING_BLUETOOTH] != 0);
-        }
+        for (unsigned i = 0; i < UI_SETTING_COUNT; ++i) selected[i] = saved[i];
+        btpan_enable(selected[UI_SETTING_BLUETOOTH] != 0);
     }
     epd_wave_set_part_times(refresh_counts[selected[UI_SETTING_FULL_REFRESH]]);
+    network_select((network_source_t)selected[UI_SETTING_NETWORK]);
 }
 
 bool ui_settings_cycle(ui_setting_id_t id)
@@ -96,17 +92,20 @@ bool ui_settings_cycle(ui_setting_id_t id)
     const ui_setting_t *setting = ui_settings_item(id);
     if (!setting) return false;
     unsigned next = (ui_settings_index(id) + 1) % setting->option_count;
+    unsigned previous = selected[id];
     if (id == UI_SETTING_BLUETOOTH && btpan_enable(next != 0) != RT_EOK) return false;
     if (id == UI_SETTING_FULL_REFRESH) epd_wave_set_part_times(refresh_counts[next]);
+    if (id == UI_SETTING_NETWORK) network_select((network_source_t)next);
     selected[id] = next;
+    if (!ui_settings_store_save(selected))
+    {
+        selected[id] = previous;
+        if (id == UI_SETTING_BLUETOOTH) btpan_enable(previous != 0);
+        if (id == UI_SETTING_FULL_REFRESH) epd_wave_set_part_times(refresh_counts[previous]);
+        if (id == UI_SETTING_NETWORK) network_select((network_source_t)previous);
+        return false;
+    }
     return true;
-}
-
-bool ui_settings_save(void)
-{
-    selected[UI_SETTING_BLUETOOTH] = ui_settings_enabled(UI_SETTING_BLUETOOTH);
-    selected[UI_SETTING_FULL_REFRESH] = ui_settings_index(UI_SETTING_FULL_REFRESH);
-    return ui_settings_store_save(selected);
 }
 
 unsigned ui_settings_index(ui_setting_id_t id)

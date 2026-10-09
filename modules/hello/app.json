@@ -1,0 +1,8 @@
+{
+  "abi": 1,
+  "id": "hello",
+  "version": 2,
+  "data_version": 1,
+  "name": "触摸示例",
+  "background": true
+}

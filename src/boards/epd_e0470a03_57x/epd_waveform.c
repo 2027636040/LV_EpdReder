@@ -24,6 +24,12 @@ static int reflesh_times = 0;
 static int s_force_full = 0;            // 一次性强制全刷标志（epd_wave_request_full 置位）
 static unsigned s_since_full;
 
+/* One LCD framebuffer: a queued transfer and the next UI submission. */
+#define EPD_FRAME_MODE_CAPACITY 2
+static EpdDrawMode s_frame_modes[EPD_FRAME_MODE_CAPACITY];
+static unsigned s_frame_head;
+static unsigned s_frame_count;
+
 /* 强制使用静态波形表（跳过 bin 文件） */
 static int force_static_wave = 0;
 
@@ -78,6 +84,20 @@ void epd_wave_request_full(void)
 {
     rt_base_t level = rt_hw_interrupt_disable();
     s_force_full = 1;
+    rt_hw_interrupt_enable(level);
+}
+
+void epd_wave_submit_frame(EpdDrawMode mode)
+{
+    rt_base_t level = rt_hw_interrupt_disable();
+    RT_ASSERT(s_frame_count < EPD_FRAME_MODE_CAPACITY);
+    if (s_force_full)
+    {
+        mode = EPD_DRAW_MODE_FULL;
+        s_force_full = 0;
+    }
+    s_frame_modes[(s_frame_head + s_frame_count) % EPD_FRAME_MODE_CAPACITY] = mode;
+    ++s_frame_count;
     rt_hw_interrupt_enable(level);
 }
 
@@ -193,12 +213,24 @@ void epd_wave_table(void)
 uint32_t epd_wave_table_get_frames(int temperature, EpdDrawMode mode)
 {
     rt_base_t level = rt_hw_interrupt_disable();
+    if (s_frame_count)
+    {
+        /* Later UI requests cannot change the mode of this queued LCD frame. */
+        mode = s_frame_modes[s_frame_head];
+        s_frame_head = (s_frame_head + 1) % EPD_FRAME_MODE_CAPACITY;
+        --s_frame_count;
+    }
+    else if (s_force_full)
+    {
+        /* Direct LCD draws outside LVGL still support manual full refresh. */
+        mode = EPD_DRAW_MODE_FULL;
+        s_force_full = 0;
+    }
     reflesh_times++;
 
-    // 首刷 / 一次性请求：强制全刷（清残影、开机首刷）
-    if (s_force_full || reflesh_times == 1)
+    /* The first frame always clears the panel; later frames use their queued mode. */
+    if (reflesh_times == 1)
     {
-        s_force_full = 0;
         mode = EPD_DRAW_MODE_FULL;
     }
     // AUTO 模式：每 g_part_disp_times 次做一次全刷，其余局刷
@@ -211,7 +243,7 @@ uint32_t epd_wave_table_get_frames(int temperature, EpdDrawMode mode)
     if (mode == EPD_DRAW_MODE_FULL) s_since_full = 0;
     rt_hw_interrupt_enable(level);
 
-    // 刷屏计划日志（验证全刷周期：每 N 次出现一次 FULL）
+    /* Full refresh follows navigation, explicit requests or the partial-refresh limit. */
     rt_kprintf("EPD: refresh #%d -> %s\n", reflesh_times,
                (EPD_DRAW_MODE_PARTIAL == mode) ? "PARTIAL" : "FULL");
 

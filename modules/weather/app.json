@@ -1,0 +1,9 @@
+{
+  "abi": 1,
+  "id": "weather",
+  "name": "天气",
+  "version": 3,
+  "data_version": 1,
+  "settings": true,
+  "background": true
+}

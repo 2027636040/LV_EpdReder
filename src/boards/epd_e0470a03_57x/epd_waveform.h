@@ -42,4 +42,7 @@ int epd_wave_get_part_times(void);
 /* 请求下一次刷新强制全刷（一次性，之后恢复周期；用于清残影/手动全刷） */
 void epd_wave_request_full(void);
 
+/* Queue one mode per assembled LVGL frame, in LCD submission order. */
+void epd_wave_submit_frame(EpdDrawMode mode);
+
 #endif /* __EPD_WAVEFORM_H__ */

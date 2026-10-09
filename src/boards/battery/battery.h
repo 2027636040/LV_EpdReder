@@ -13,13 +13,12 @@ extern "C" {
 #endif
 
 /**
- * @brief 初始化电池服务（使能 ADC、初始化电量计算器、启动巡检定时器）
- * @param ui_queue 电池事件投递的消息队列（MSG_BATTERY_CHECK / MSG_UPDATE_CHARGE_STATUS）
+ * @brief Initialize ADC sampling and the battery calculator.
  */
-void battery_init(rt_mq_t ui_queue);
+void battery_init(void);
 
 /**
- * @brief 停止电池服务（停止巡检定时器）
+ * @brief Disable battery ADC sampling.
  */
 void battery_stop(void);
 

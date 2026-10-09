@@ -1,6 +1,16 @@
+import os
+import sys
 from building import *
+import rtconfig
 
 cwd = GetCurrentDir()
-src = Glob('*.c') + Glob('icons/*.c')
+sys.path.insert(0, os.path.abspath(os.path.join(cwd, '../../tools')))
+from app_profile import generate
+generate(os.path.join(cwd, '../..'), os.path.join(Dir('#').abspath, rtconfig.OUTPUT_DIR), rtconfig)
+src = Glob('*.c') + Glob('icons/*.c') + Glob('apps/*.c') + Glob('platform/*.c')
 objs = DefineGroup('launcher', src, depend=['EPD_USE_LVGL'], CPPPATH=[cwd])
+for name in sorted(os.listdir(os.path.join(cwd, 'apps'))):
+    script = os.path.join(cwd, 'apps', name, 'SConscript')
+    if os.path.isfile(script):
+        objs += SConscript(script)
 Return('objs')

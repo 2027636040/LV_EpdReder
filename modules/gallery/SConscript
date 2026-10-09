@@ -1,0 +1,10 @@
+from building import *
+import os
+
+cwd = GetCurrentDir()
+GetCurrentEnv().Append(CCFLAGS=' -O2')
+objects = DefineGroup('gallery', Glob('*.c'), depend=[''], CPPPATH=[cwd],
+                      CPPDEFINES=['BUILD_DLMODULE', 'HAVE_CCONFIG_H'])
+objects += SConscript(os.path.join(cwd, '..', 'common', 'image', 'SConscript'),
+                      variant_dir=os.path.join(cwd, 'output', 'image'), duplicate=0)
+Return('objects')

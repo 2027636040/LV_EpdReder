@@ -2,22 +2,36 @@
 
 comment "------------Project configuration-----------"
 
+config MBEDTLS_USER_CONFIG_FILE
+    string
+    depends on PKG_USING_MBEDTLS && EPD_USE_LVGL && BSP_USING_PSRAM && IMAGE_CACHE_IN_PSRAM_SIZE > 0
+    default "epd_tls_config.h"
+    help
+        Apply the project TLS memory configuration to the firmware and native
+        modules. The platform routes mbedTLS allocations to the shared PSRAM heap.
+
 config CUSTOM_MEM_MAP
     bool 
 	select custom_mem_map
 	default y    
 
 config EPD_USE_LVGL
-    bool "Use LVGL v9 for EPD rendering"
+    bool
     default y
     select PKG_USING_LITTLEVGL2RTT
+    select GUI_APP_FRAMEWORK
+    select LVSF_USING_SWITCHANIM
+    select LV_USE_SNAPSHOT
     help
-        Initialize the LVGL v9 display port and run its timer handler.
+        Initialize the LVGL v9 display port and app_fwk page lifecycle.
+        The pinned SDK's V9 app_trans_animation_reset references switchanim
+        even with APP_TRANS_ANIMATION_NONE. Link the existing component and
+        its snapshot dependency, but keep framework transitions disabled.
 
 if EPD_USE_LVGL
 menu "app cache Memory configuration"
     config IMAGE_CACHE_IN_PSRAM_SIZE
-        int "image cache in psram size(standalone)"
+        int "Shared application and image PSRAM heap size (bytes)"
         depends on BSP_USING_PSRAM
         default 6291456
 
@@ -48,6 +62,13 @@ menu "app cache Memory configuration"
             bool "PSRAM (standalone)"
             depends on BSP_USING_PSRAM
 
+        config TINY_TTF_CACHE_IN_APP_PSRAM
+            bool "PSRAM (shared application heap)"
+            depends on BSP_USING_PSRAM
+            help
+                Project font draw-buffer handlers use the SDK application
+                PSRAM heap, without a separately reserved glyph pixel pool.
+
         config TINY_TTF_CACHE_IN_SRAM_STANDALONE
             bool "SRAM (standalone)"
 
@@ -74,18 +95,6 @@ config LV_LOG_LEVEL
     default 2
 endif
 
-if !EPD_USE_LVGL
-choice EPD_EPUB_COLOR_DEPTH
-	prompt "Select output framebuffer color depth"
-	default EPDIY_EPUB_1BPP if LCD_USING_EPD_OPMO37A3
-	default EPDIY_EPUB_4BPP if !LCD_USING_EPD_OPMO37A3
-	config EPDIY_EPUB_1BPP
-		bool "EPDIY_EPUB_1BPP"
-	config EPDIY_EPUB_4BPP
-		bool "EPDIY_EPUB_4BPP"    
-endchoice
-endif
-
 if !BSP_USING_BUILT_LCD || EPD_USE_LVGL
 #define the EPD connection type
 	config LCD_USING_EPD_SPI
@@ -97,10 +106,6 @@ if !BSP_USING_BUILT_LCD || EPD_USE_LVGL
 #define the EPD module name
 	config LCD_USING_OPM060D
 		bool
-		default n
-
-	config LCD_USING_OPM060D
-	    bool 
 		default n
 
 	config LCD_USING_EPD_OPM060DA_57

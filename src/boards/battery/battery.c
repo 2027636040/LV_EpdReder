@@ -4,8 +4,7 @@
  *
  * 说明：
  *  - ADC 设备 "bat1"，通道 7；电量由 battery_calculator（充放电曲线表）计算
- *  - 巡检定时器 10 秒周期，回调中只投递 MSG_BATTERY_CHECK 消息，
- *    实际的 ADC 读取/UI 刷新在 UI 主循环中完成（避免定时器线程中做耗时操作）
+ *  - Battery values are read by the UI status polling loop.
  *  - 57 平台（SF32LB57X）电池采集方案待接入，当前提供占位实现
  */
 #include "battery.h"
@@ -21,30 +20,14 @@
 #include "rtdevice.h"
 #include "board.h"
 #include "battery_calculator.h"
-#include "ui_events.h"
 
 static rt_device_t s_adc_dev = RT_NULL;
 static int s_adc_channel = 7;
-static rt_timer_t s_check_timer = RT_NULL;
-static rt_mq_t s_ui_queue = RT_NULL;
 static uint8_t s_low_power = 0;
 static battery_calculator_t s_calc;
 
-static void battery_check_callback(void *parameter)
+void battery_init(void)
 {
-    (void)parameter;
-
-    /* 定时器回调上下文：只投递消息，让 UI 主循环执行实际工作 */
-    if (s_ui_queue)
-    {
-        UIAction msg = MSG_BATTERY_CHECK;
-        rt_mq_send(s_ui_queue, &msg, sizeof(UIAction));
-    }
-}
-
-void battery_init(rt_mq_t ui_queue)
-{
-    s_ui_queue = ui_queue;
     s_adc_dev = rt_device_find("bat1");
     s_adc_channel = 7;
     s_low_power = 0;
@@ -74,29 +57,14 @@ void battery_init(rt_mq_t ui_queue)
     {
         LOG_E("battery calculator init failed: %d", result);
     }
-
-    /* 10 秒周期巡检 */
-    s_check_timer = rt_timer_create("bat_check", battery_check_callback, RT_NULL,
-                                    rt_tick_from_millisecond(10000),
-                                    RT_TIMER_FLAG_PERIODIC | RT_TIMER_FLAG_SOFT_TIMER);
-    if (s_check_timer != RT_NULL)
-    {
-        rt_timer_start(s_check_timer);
-        LOG_I("battery monitor started");
-    }
-    else
-    {
-        LOG_E("failed to create battery check timer");
-    }
 }
 
 void battery_stop(void)
 {
-    if (s_check_timer != RT_NULL)
+    if (s_adc_dev)
     {
-        rt_timer_stop(s_check_timer);
-        rt_timer_delete(s_check_timer);
-        s_check_timer = RT_NULL;
+        rt_adc_disable((rt_adc_device_t)s_adc_dev, s_adc_channel);
+        s_adc_dev = RT_NULL;
     }
 }
 
@@ -136,9 +104,8 @@ void battery_set_low_power_state(uint8_t state)
 
 #else /* SF32LB57X：电池采集方案待接入，提供占位实现 */
 
-void battery_init(rt_mq_t ui_queue)
+void battery_init(void)
 {
-    (void)ui_queue;
 }
 
 void battery_stop(void)

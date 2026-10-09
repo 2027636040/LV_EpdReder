@@ -13,7 +13,7 @@ extern "C" {
 //模组的VCOM电压(2100代表-2.10V)
 void tps_init(uint16_t vcom_voltage);
 rt_err_t tps_enter_sleep(void);
-rt_err_t tps_exit_sleep(void);
+void tps_exit_sleep(void);
 #ifdef __cplusplus
 }
 #endif

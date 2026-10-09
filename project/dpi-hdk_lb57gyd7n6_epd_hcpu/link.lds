@@ -197,11 +197,14 @@ SECTIONS
   .rom2 :
   {
     KEEP(*(.font_data))
-    KEEP(*(.rodata.epub_ttf_data_size))
+    KEEP(*(.rodata.epub_ttf_zlib_data_size))
     KEEP(*(.SECTION_TTF_HEADER.*))
     KEEP(*(.SECTION_TTF.*))
     KEEP(*(.EPD_IMG_EZIP_HEADER*))
     KEEP(*(.EPD_IMG_EZIP*))
+    /* GBK lookup tables are immutable resources, shared by FatFs and TXT. */
+    *(.rodata.oem2uni936)
+    *(.rodata.uni2oem936)
 
   } > ROM2
 
@@ -266,6 +269,20 @@ SECTIONS
     BuiltinAppTab_start = .;
     KEEP(*(BuiltinAppTab))
     BuiltinAppTab_end = .;
+
+    . = ALIGN(4);
+    BuiltinApp1Tab_start = .;
+    KEEP(*(.BuiltinApp1Tab))
+    BuiltinApp1Tab_end = .;
+    . = ALIGN(4);
+    BuiltinApp2Tab_start = .;
+    KEEP(*(.BuiltinApp2Tab))
+    BuiltinApp2Tab_end = .;
+
+    . = ALIGN(4);
+    __app_subpage_db_start__ = .;
+    KEEP(*(.app_subpage_db))
+    __app_subpage_db_end__ = .;
 
     . = ALIGN(4);
     __app_font_start__ = .;

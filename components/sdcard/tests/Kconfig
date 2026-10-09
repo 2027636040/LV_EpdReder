@@ -1,0 +1,26 @@
+mainmenu "SD card package configuration test"
+
+config RT_USING_PIN
+    bool "GPIO"
+    default y
+config RT_USING_SDIO
+    bool "MMC/SD core"
+    default y
+config BSP_USING_SD_LINE
+    bool "SiFli SDIO"
+    default y
+config RT_USING_DFS
+    bool "DFS"
+    default y
+config RT_USING_DFS_ELMFAT
+    bool "FAT"
+    default y
+config SDIO_CARD_MODE
+    int "Card type"
+    default 0
+config SD_INSERT_DETECT_PIN
+    int "Detection pin"
+    default 11
+
+rsource "../Kconfig"
+

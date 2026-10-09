@@ -1,4 +1,5 @@
 import os
+import sys
 import rtconfig
 
 # Check SDK 
@@ -20,6 +21,8 @@ AddBootLoader(SIFLI_SDK,rtconfig.CHIP)
 AddLCPU(SIFLI_SDK,rtconfig.CHIP,"../../src/lcpu_img.c")
 # Set default compile options
 SifliEnv()
+# NOR metadata wear levelling; the SDK port otherwise defaults to disabled (-1).
+rtconfig.CFLAGS += ' -DLFS_BLOCK_CYCLES=500'
 
 TARGET = rtconfig.OUTPUT_DIR + rtconfig.TARGET_NAME + '.' + rtconfig.TARGET_EXT
 env = Environment(tools = ['mingw'],
@@ -29,12 +32,19 @@ env = Environment(tools = ['mingw'],
     AR = rtconfig.AR, ARFLAGS = '-rc',
     LINK = rtconfig.LINK, LINKFLAGS = rtconfig.LFLAGS)
 env.PrependENVPath('PATH', rtconfig.EXEC_PATH)
+if ARGUMENTS.get('HANG_DIAG') == '1':
+    env.Append(CPPDEFINES=['EPD_HANG_DIAG'])
    
 # Prepare building environment
 objs = PrepareBuilding(env)
 
 # Build application.
 DoBuilding(TARGET, objs)
+
+# Capture the main firmware groups before AddFTAB changes the SDK build context.
+import building
+from ua import PrepareUA
+PrepareUA(building.Projects, os.path.join(SIFLI_SDK, 'rtos/rtthread'), Dir('#').abspath)
 
 # Configuration macros can change public structure layouts, so every compiled
 # object must depend on rtconfig.h even when it is included through a macro.
@@ -54,9 +64,36 @@ while pending_nodes:
 AddFTAB(SIFLI_SDK,rtconfig.CHIP)
 
 
-# Add existing file system image bin
-fs_bin=FileSystemBuild( "../disk", env)
-AddCustomImg("fs_root",bin=[fs_bin])
+# Build the internal NOR image with the SDK LittleFS tool, not mkfatimg.
+sys.path.insert(0, os.path.abspath('../tools'))
+from lfs_image import add_image
+from native_apps import add_weather_package, add_books_package, add_gallery_package, add_words_package
+weather_package = add_weather_package(env, SIFLI_SDK, '..',
+                              rgb565=GetConfigValue('LV_COLOR_DEPTH') == 16,
+                              palette=(1 if GetDepend('EZIP_PAL_SUPPORT_1') else 0)
+                                      if GetDepend('EZIP_PAL_SUPPORT') else None)
+books_package = add_books_package(env, SIFLI_SDK, '..',
+                                 rgb565=GetConfigValue('LV_COLOR_DEPTH') == 16,
+                                 palette=(1 if GetDepend('EZIP_PAL_SUPPORT_1') else 0)
+                                         if GetDepend('EZIP_PAL_SUPPORT') else None)
+gallery_package = add_gallery_package(env, SIFLI_SDK, '..',
+                                 rgb565=GetConfigValue('LV_COLOR_DEPTH') == 16,
+                                 palette=(1 if GetDepend('EZIP_PAL_SUPPORT_1') else 0)
+                                         if GetDepend('EZIP_PAL_SUPPORT') else None)
+words_package = add_words_package(env, SIFLI_SDK, '..',
+                                 rgb565=GetConfigValue('LV_COLOR_DEPTH') == 16,
+                                 palette=(1 if GetDepend('EZIP_PAL_SUPPORT_1') else 0)
+                                         if GetDepend('EZIP_PAL_SUPPORT') else None,
+                                 dictionary=ARGUMENTS.get('WORDS_DICTIONARY'))
+# Build the installable words package without adding it to the factory image.
+env.Depends(env['target'], words_package[1])
+fs_bin = add_image(env, SIFLI_SDK, ARGUMENTS.get('STORAGE_IMPORT'),
+                   [weather_package, books_package, gallery_package])
+# Factory/recovery image is opt-in: ordinary firmware download keeps user files.
+if ARGUMENTS.get('STORAGE_IMAGE') == '1' or ARGUMENTS.get('STORAGE_IMPORT'):
+    AddCustomImg('fs_root', bin=[fs_bin])
+if ARGUMENTS.get('STORAGE_IMPORT'):
+    AddCustomImg('ble_store', bin=[os.path.join(os.path.abspath(ARGUMENTS['STORAGE_IMPORT']), 'ble.bin')])
 
 
 # Add EPD wave form image bin
@@ -66,3 +103,6 @@ if GetDepend('EPD_WAVEFORM_USE_BIN'):
 
 # Generate download .bat script
 GenDownloadScript(env)
+for name in ('download.bat', 'download.jlink', 'download.sh', 'uart_download.bat', 'uart_download.sh'):
+    env.Depends(os.path.join(env['build_dir'], name),
+                Value(str((ARGUMENTS.get('STORAGE_IMAGE'), ARGUMENTS.get('STORAGE_IMPORT')))))

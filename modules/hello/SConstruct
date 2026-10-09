@@ -1,0 +1,36 @@
+from pathlib import Path
+import importlib.util
+import sys
+
+from SCons.Script import ARGUMENTS, Exit
+from ua import BuildLibrary
+import rtconfig
+
+repo = Path(Dir('#').abspath).parents[1]
+project = repo / 'project'
+firmware = project / ARGUMENTS.get('FIRMWARE', 'build_dpi-hdk_lb57gyd7n6_epd_hcpu')
+if not (firmware / 'rtconfig.h').is_file() or not (project / 'rtua.py').is_file():
+    print('Build the firmware and run scons --board=<board> --target=ua first.')
+    Exit(1)
+if not (firmware / 'epd_app_profile.h').is_file():
+    print('Rebuild the firmware to generate its native app profile.')
+    Exit(1)
+
+spec = importlib.util.spec_from_file_location('rtua', project / 'rtua.py')
+firmware_ua = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(firmware_ua)
+firmware_paths = firmware_ua.GetCPPPATH
+
+def module_paths(bsp_root, rtt_root):
+    # The SDK parses generated rtconfig.h in firmware; source paths belong to project.
+    paths = [str(firmware)] + firmware_paths(str(project), rtt_root)
+    # SCons variant directories refer to SDK headers without copying them there.
+    paths += [str(repo / 'SiFli-SDK' / path.split('/sifli_sdk/', 1)[1])
+              for path in paths if '/sifli_sdk/' in path]
+    return paths
+
+firmware_ua.GetCPPPATH = module_paths
+sys.modules['rtua'] = firmware_ua
+BuildLibrary('hello.so', 'SConscript', 'app',
+             BSP_ROOT=str(firmware),
+             RTT_ROOT=str(repo / 'SiFli-SDK' / 'rtos' / 'rtthread'))

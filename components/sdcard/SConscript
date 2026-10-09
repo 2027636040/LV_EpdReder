@@ -1,0 +1,18 @@
+import os
+from building import *
+
+cwd = GetCurrentDir()
+group = []
+
+if GetDepend('PKG_USING_EPD_SDCARD'):
+    src = [
+        os.path.join(cwd, 'src', 'sdcard.c'),
+        os.path.join(cwd, 'port', 'sdcard_sifli_sdio.c'),
+    ]
+    group = DefineGroup('EPD_SDCard', src,
+                        depend=['PKG_USING_EPD_SDCARD'],
+                        CPPPATH=[os.path.join(cwd, 'include'),
+                                 os.path.join(cwd, 'port')])
+
+Return('group')
+

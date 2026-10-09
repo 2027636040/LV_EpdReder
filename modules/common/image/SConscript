@@ -1,0 +1,23 @@
+from building import *
+import os
+
+cwd = GetCurrentDir()
+vendor = os.path.abspath(os.path.join(cwd, '..', '..', 'gallery', 'third_party'))
+png = os.path.join(vendor, 'libpng')
+zlib = os.path.join(vendor, 'zlib')
+paths = [cwd, png, zlib, os.path.join(vendor, 'tjpgd')]
+defines = ['BUILD_DLMODULE', 'HAVE_CCONFIG_H', 'Z_PREFIX', 'PNG_ARM_NEON_OPT=0']
+objects = DefineGroup('raster', Glob('*.c'), depend=[''], CPPPATH=paths, CPPDEFINES=defines)
+png_sources = ['png.c', 'pngerror.c', 'pngget.c', 'pngmem.c', 'pngread.c',
+               'pngrio.c', 'pngrtran.c', 'pngrutil.c', 'pngset.c', 'pngtrans.c']
+zlib_sources = ['adler32.c', 'crc32.c', 'inflate.c', 'inftrees.c', 'inffast.c', 'zutil.c']
+sources = [os.path.join(png, name) for name in png_sources]
+sources += [os.path.join(zlib, name) for name in zlib_sources]
+sources += [os.path.join(vendor, 'tjpgd', 'tjpgd.c')]
+codec_env = GetCurrentEnv().Clone()
+codec_env.Append(CPPDEFINES=['malloc=raster_codec_malloc', 'free=raster_codec_free'],
+                 CCFLAGS=' -O2 -fvisibility=hidden -Wno-error')
+for source in sources:
+    target = os.path.join('image_codecs', os.path.basename(source).replace('.c', '.o'))
+    objects += codec_env.Object(target, source)
+Return('objects')

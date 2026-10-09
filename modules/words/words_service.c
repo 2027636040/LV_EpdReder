@@ -1,0 +1,524 @@
+#include "words_store.h"
+#include <dfs_posix.h>
+#include <dlmodule.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+
+#define JOB_COUNT 8u
+static char book_file[96], book_temp[96];
+#define BOOK_FILE book_file
+#define BOOK_TEMP book_temp
+
+static epd_service_t *worker;
+static uint32_t generation, failed_serial, queue_head, queue_count, card_token, active_slot;
+static words_job_t jobs[JOB_COUNT];
+static words_result_t *completed;
+static bool stopping, flush_requested, flush_finished, flush_success;
+static words_counts_t daily;
+static int32_t daily_day;
+
+typedef struct { const words_job_t *job; const char *path; int fd; } input_t;
+
+static bool stale(const words_job_t *job)
+{
+    rt_base_t level = rt_hw_interrupt_disable();
+    bool value = job->serial != generation || stopping || (worker && epd_service_cancelled(worker));
+    rt_hw_interrupt_enable(level);
+    return value;
+}
+static bool cancellable(words_job_kind_t kind)
+{
+    return kind == WORDS_SEARCH || kind == WORDS_DETAIL || kind == WORDS_BOOKS || kind == WORDS_BOOK_SELECT;
+}
+
+static bool read_at(void *context, uint32_t offset, void *buffer, size_t size)
+{
+    input_t *input = context;
+    if (cancellable(input->job->kind) && stale(input->job)) return false;
+    storage_lock();
+    bool ok = storage_path_available(input->path) && lseek(input->fd, offset, SEEK_SET) == (off_t)offset;
+    size_t done = 0;
+    while (ok && done < size)
+    {
+        if (!storage_path_available(input->path)) { ok = false; break; }
+        int n = read(input->fd, (char *)buffer + done, size - done);
+        if (n <= 0) ok = false; else done += n;
+    }
+    storage_unlock();
+    return ok;
+}
+
+static void input_close(input_t *input)
+{
+    if (input->fd >= 0) { storage_lock(); close(input->fd); storage_unlock(); input->fd = -1; }
+}
+
+static bool open_path(input_t *input, words_result_t *result, words_dictionary_t *dictionary, const char *path)
+{
+    struct stat st = {0};
+    snprintf(result->path, sizeof(result->path), "%s", path);
+    input->path = result->path;
+    storage_lock();
+    bool valid = storage_path_available(path) && stat(path, &st) == 0 && S_ISREG(st.st_mode) &&
+                 st.st_size > 0 && st.st_size <= INT32_MAX;
+    input->fd = valid ? open(path, O_RDONLY) : -1;
+    storage_unlock();
+    if (input->fd < 0) return false;
+    if (words_dictionary_open(dictionary, read_at, input, (uint32_t)st.st_size) &&
+        read_at(input, 40, result->identity, sizeof(result->identity))) return true;
+    input_close(input); strcpy(result->error, "词库格式错误"); return false;
+}
+
+static bool open_dictionary(input_t *input, words_result_t *result, words_dictionary_t *dictionary)
+{
+    char builtin[128];
+    storage_app_path(builtin, sizeof(builtin), "words", STORAGE_APP_CODE, "res/library.wdb");
+    char custom[128];
+    storage_app_path(custom, sizeof(custom), "words", STORAGE_APP_DATA, "library.wdb");
+    const char *paths[] = {custom, "/sdcard/words/library.wdb", builtin};
+    if (input->job->path[0]) return open_path(input, result, dictionary, input->job->path);
+    for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i)
+    {
+        if (!paths[i][0]) continue;
+        if (open_path(input, result, dictionary, paths[i])) return true;
+        if (result->error[0]) return false;
+    }
+    return false;
+}
+
+static int64_t clock_now(int32_t *day)
+{
+    int64_t now = time(NULL);
+#ifdef NETUTILS_NTP_TIMEZONE
+    const int timezone = NETUTILS_NTP_TIMEZONE * 3600;
+#else
+    const int timezone = 8 * 3600;
+#endif
+#if RT_VER_NUM <= 0x40003
+    now -= timezone;
+#endif
+    *day = (int32_t)((now + timezone) / 86400);
+    return now;
+}
+
+static bool update_day(words_result_t *result, int64_t *now, int32_t *day)
+{
+    *now = clock_now(day);
+    result->clock_valid = *now >= INT64_C(1704067200) && *now < INT64_C(4102444800);
+    if (daily_day != *day)
+    {
+        if (!words_store_counts(*day, *now, &daily)) return false;
+        daily_day = *day;
+    }
+    return true;
+}
+
+static bool put_record(uint32_t slot, const words_record_t *old, const words_record_t *value, int32_t day)
+{
+    if (!words_store_put(slot, value)) return false;
+    words_counts_t before = {0}, after = {0};
+    words_count_record(&before, old, day); words_count_record(&after, value, day);
+    daily.added += after.added - before.added; daily.reviewed += after.reviewed - before.reviewed;
+    daily.ratings += after.ratings - before.ratings; daily.collected += after.collected - before.collected;
+    return true;
+}
+
+static void summary(words_result_t *result, int64_t now)
+{
+    words_config_t *config = words_store_config();
+    result->quota = config->quota; strcpy(result->book, config->title);
+    result->counts = daily; result->counts.due = 0;
+    const words_index_t *index = words_store_index();
+    for (uint32_t i = 0; i < words_store_count(); ++i)
+        if (index[i].phase != WORDS_NEW && !(index[i].flags & WORDS_PAUSED) && index[i].due <= now)
+            ++result->counts.due;
+}
+
+static bool read_entry(input_t *input, words_result_t *result)
+{
+    if (input->job->slot) return words_store_content(input->job->slot - 1, result);
+    words_dictionary_t dictionary;
+    if (!open_dictionary(input, result, &dictionary))
+    { if (!result->error[0]) strcpy(result->error, "未找到词库"); return false; }
+    bool ok = !memcmp(input->job->identity, result->identity, sizeof(result->identity));
+    if (!ok) strcpy(result->error, "词库已更换，请重新查询");
+    else ok = words_dictionary_entry(&dictionary, input->job->entry, result->content,
+                                     sizeof(result->content), result->fields);
+    input_close(input);
+    if (ok)
+    {
+        int slot = words_store_find(result->fields[WORDS_WORD]);
+        if (slot == -2) return false;
+        if (slot >= 0) { result->slot = slot + 1; result->flags = words_store_index()[slot].flags; }
+    }
+    return ok;
+}
+
+static int collection_new(void)
+{
+    const words_index_t *index = words_store_index();
+    for (uint32_t i = 0; i < words_store_count(); ++i)
+        if (index[i].phase == WORDS_NEW && (index[i].flags & (WORDS_PAUSED | WORDS_COLLECTED)) == WORDS_COLLECTED)
+            return (int)i;
+    return -1;
+}
+
+static bool next_card(input_t *input, words_result_t *result, int64_t now)
+{
+    words_config_t *config = words_store_config();
+    const words_index_t *index = words_store_index();
+    if (!result->clock_valid) { strcpy(result->error, "请先设置系统时间"); return false; }
+    int selected = -1;
+    if (config->pending && config->pending <= words_store_count())
+    {
+        uint32_t i = config->pending - 1;
+        if (!(index[i].flags & WORDS_PAUSED) && (index[i].phase != WORDS_NEW || daily.added < config->quota))
+            selected = (int)i;
+    }
+    if (selected < 0) selected = words_due_select(index, words_store_count(), now);
+    /* Keep the book as the primary source without starving collected words. */
+    if (selected < 0 && daily.added < config->quota && daily.added % 4 == 3) selected = collection_new();
+    if (selected < 0 && daily.added < config->quota)
+    {
+        words_dictionary_t dictionary;
+        if (!open_path(input, result, &dictionary, config->book))
+        { strcpy(result->error, "当前词书不可用，请重新选择"); return false; }
+        if (memcmp(result->identity, config->identity, sizeof(config->identity)))
+        {
+            memcpy(config->identity, result->identity, sizeof(config->identity));
+            config->cursor = 0; words_store_config_changed();
+        }
+        while (config->cursor < dictionary.count)
+        {
+            if (stale(input->job)) break;
+            if (!words_dictionary_entry(&dictionary, config->cursor, result->content,
+                                         sizeof(result->content), result->fields))
+            { input_close(input); strcpy(result->error, "词书读取失败"); return false; }
+            int slot = words_store_find(result->fields[WORDS_WORD]);
+            if (slot == -2) { input_close(input); return false; }
+            if ((slot >= 0 && (words_store_index()[slot].phase != WORDS_NEW ||
+                 (words_store_index()[slot].flags & WORDS_PAUSED))) || !result->fields[WORDS_TRANSLATION][0])
+            { ++config->cursor; words_store_config_changed(); continue; }
+            selected = words_store_ensure(result);
+            if (selected < 0) { input_close(input); return false; }
+            ++config->cursor; words_store_config_changed();
+            break;
+        }
+        input_close(input);
+        if (selected < 0) selected = collection_new();
+    }
+    result->fields[0] = NULL; result->slot = 0;
+    if (selected < 0) { active_slot = 0; return true; }
+    if (!words_store_content(selected, result)) return false;
+    if (config->pending != (uint32_t)selected + 1)
+    { config->pending = selected + 1; words_store_config_changed(); }
+    if (active_slot != (uint32_t)selected + 1 || !card_token) ++card_token;
+    if (!card_token) ++card_token;
+    active_slot = selected + 1; result->token = card_token;
+    return true;
+}
+
+static void add_book(words_result_t *result, const words_job_t *job, const char *path, const char *name, unsigned *seen)
+{
+    unsigned n = (*seen)++;
+    if (n < job->value) return;
+    if (result->matches.count == WORDS_MATCH_MAX) { result->matches.more = true; return; }
+    unsigned i = result->matches.count++;
+    snprintf(result->book_paths[i], sizeof(result->book_paths[i]), "%s", path);
+    snprintf(result->names[i], sizeof(result->names[i]), "%s", name);
+}
+
+static void list_books(const words_job_t *job, words_result_t *result)
+{
+    unsigned seen = 0;
+    char builtin[128];
+    if (storage_app_path(builtin, sizeof(builtin), "words", STORAGE_APP_CODE, "res/library.wdb"))
+        add_book(result, job, builtin, "内置词书", &seen);
+    char own_books[128];
+    storage_app_path(own_books, sizeof(own_books), "words", STORAGE_APP_DATA, "books");
+    const char *dirs[] = {own_books, "/sdcard/words/books"};
+    storage_lock();
+    struct stat cached;
+    if (storage_file_recover(BOOK_FILE) && stat(BOOK_FILE, &cached) == 0 && S_ISREG(cached.st_mode))
+    {
+        const char *title = words_store_config()->imported_title;
+        add_book(result, job, BOOK_FILE, title[0] ? title : "已导入词书", &seen);
+    }
+    for (unsigned d = 0; d < 2 && !result->matches.more; ++d)
+    {
+        DIR *dir = storage_path_available(dirs[d]) ? opendir(dirs[d]) : NULL;
+        if (!dir) continue;
+        struct dirent *entry;
+        while (!stale(job) && (entry = readdir(dir)) != NULL)
+        {
+            size_t n = strlen(entry->d_name);
+            if (n < 5 || strcmp(entry->d_name + n - 4, ".wdb")) continue;
+            char path[STORAGE_PATH_MAX];
+            if (snprintf(path, sizeof(path), "%s/%s", dirs[d], entry->d_name) >= (int)sizeof(path)) continue;
+            struct stat st;
+            if (stat(path, &st) || !S_ISREG(st.st_mode)) continue;
+            add_book(result, job, path, entry->d_name, &seen);
+            if (result->matches.more) break;
+        }
+        closedir(dir);
+    }
+    storage_unlock(); result->offset = job->value;
+}
+
+static bool import_book(input_t *input, words_result_t *result)
+{
+    words_dictionary_t dictionary;
+    if (!open_path(input, result, &dictionary, input->job->path))
+    { strcpy(result->error, "词书无法读取"); return false; }
+    char package_book[128];
+    bool builtin = storage_app_path(package_book, sizeof(package_book), "words", STORAGE_APP_CODE,
+                                    "res/library.wdb") && !strcmp(input->job->path, package_book);
+    bool ok = true;
+    bool resident = builtin || !strcmp(input->job->path, BOOK_FILE);
+    if (!resident)
+    {
+        struct statfs space = {0};
+        storage_lock();
+        bool enough = storage_app_available("words") && statfs(storage_path_root(BOOK_FILE), &space) == 0 &&
+                      (uint64_t)space.f_bfree * space.f_bsize >= (uint64_t)dictionary.size + 65536u;
+        storage_unlock();
+        if (!enough)
+        { input_close(input); strcpy(result->error, "应用存储空间不足"); return false; }
+        storage_lock(); int out = open(BOOK_TEMP, O_RDWR | O_CREAT | O_TRUNC, 0); storage_unlock();
+        ok = out >= 0;
+        for (uint32_t offset = 0; ok && offset < dictionary.size; )
+        {
+            uint32_t n = dictionary.size - offset;
+            if (n > sizeof(result->content)) n = sizeof(result->content);
+            ok = read_at(input, offset, result->content, n);
+            uint32_t crc = storage_crc32(result->content, n);
+            storage_lock();
+            ok = ok && write(out, result->content, n) == (int)n &&
+                 lseek(out, offset, SEEK_SET) == (off_t)offset && read(out, result->content, n) == (int)n;
+            storage_unlock();
+            ok = ok && storage_crc32(result->content, n) == crc;
+            offset += n;
+        }
+        input_close(input);
+        input->fd = out; input->path = BOOK_TEMP;
+        uint8_t copied_identity[24];
+        ok = ok && words_dictionary_open(&dictionary, read_at, input, dictionary.size) &&
+             read_at(input, 40, copied_identity, sizeof(copied_identity)) &&
+             !memcmp(copied_identity, result->identity, sizeof(copied_identity));
+        for (uint32_t i = 0; ok && i < dictionary.count; ++i)
+            ok = words_dictionary_entry(&dictionary, i, result->content, sizeof(result->content), result->fields);
+        storage_lock();
+        if (out >= 0) { if (fsync(out)) ok = false; close(out); input->fd = -1; }
+        if (ok && !stale(input->job)) ok = storage_file_commit(BOOK_TEMP, BOOK_FILE); else ok = false;
+        if (!ok && storage_path_available(BOOK_TEMP)) unlink(BOOK_TEMP);
+        storage_unlock();
+    }
+    input_close(input);
+    if (!ok) { strcpy(result->error, "词书导入失败"); return false; }
+    words_config_t *config = words_store_config();
+    snprintf(config->book, sizeof(config->book), "%s", builtin ? input->job->path : BOOK_FILE);
+    snprintf(config->title, sizeof(config->title), "%s", input->job->query);
+    if (!resident) snprintf(config->imported_title, sizeof(config->imported_title), "%s", input->job->query);
+    memcpy(config->identity, result->identity, sizeof(config->identity));
+    config->cursor = config->pending = 0; active_slot = 0;
+    words_store_config_changed(); result->accepted = true;
+    return true;
+}
+
+static bool execute(input_t *input, words_result_t *result, bool ready)
+{
+    const words_job_t *job = input->job;
+    int64_t now; int32_t day;
+    if (!ready) { snprintf(result->error, sizeof(result->error), "%s", words_store_error()); return false; }
+    if (!update_day(result, &now, &day)) return false;
+    bool ok = true;
+    switch (job->kind)
+    {
+    case WORDS_SEARCH:
+    {
+        words_dictionary_t dictionary;
+        ok = open_dictionary(input, result, &dictionary);
+        if (!ok && !result->error[0]) strcpy(result->error, "未找到词库");
+        if (ok) ok = words_dictionary_search(&dictionary, job->query, &result->matches);
+        for (unsigned i = 0; ok && i < result->matches.count; ++i)
+        {
+            ok = words_dictionary_entry(&dictionary, result->matches.entry[i], result->content,
+                                        sizeof(result->content), result->fields);
+            if (ok) strcpy(result->names[i], result->fields[WORDS_WORD]);
+        }
+        input_close(input); break;
+    }
+    case WORDS_DETAIL: ok = read_entry(input, result); break;
+    case WORDS_HOME: break;
+    case WORDS_NEXT: ok = next_card(input, result, now); break;
+    case WORDS_RATE:
+    {
+        if (!job->slot || job->slot != active_slot || job->token != card_token)
+        { strcpy(result->error, "该单词已经评分，请继续学习"); return false; }
+        words_record_t old, value;
+        if (!result->clock_valid) { strcpy(result->error, "请先设置系统时间"); return false; }
+        if (!words_store_get(job->slot - 1, &old)) return false;
+        if (!words_record_rate(&old, (words_rating_t)job->value, now, day, &value))
+        { strcpy(result->error, "时间异常或单词已暂停"); return false; }
+        if (!put_record(job->slot - 1, &old, &value, day)) return false;
+        ++card_token; active_slot = 0;
+        words_store_config()->pending = 0; words_store_config_changed(); result->accepted = true;
+        if (!stale(job)) ok = next_card(input, result, now);
+        break;
+    }
+    case WORDS_COLLECT:
+    case WORDS_PAUSE:
+    {
+        if (!read_entry(input, result)) return false;
+        int slot = words_store_ensure(result);
+        words_record_t old, value;
+        if (slot < 0 || !words_store_get(slot, &old)) return false;
+        value = old;
+        uint32_t flag = job->kind == WORDS_COLLECT ? WORDS_COLLECTED : WORDS_PAUSED;
+        if (job->value) value.flags |= flag; else value.flags &= ~flag;
+        if (!put_record(slot, &old, &value, day)) return false;
+        result->slot = slot + 1; result->flags = value.flags; result->accepted = true;
+        if (result->slot == active_slot) result->token = card_token;
+        if (job->kind == WORDS_COLLECT && !job->value && value.card.phase == WORDS_NEW &&
+            words_store_config()->pending == (uint32_t)slot + 1)
+        {
+            /* Re-evaluate book membership instead of keeping a removed collection-only card. */
+            words_store_config()->pending = words_store_config()->cursor = 0;
+            words_store_config_changed(); active_slot = 0;
+            if (job->token) ok = next_card(input, result, now);
+        }
+        break;
+    }
+    case WORDS_COLLECTION:
+    {
+        unsigned skipped = 0;
+        for (uint32_t i = 0; i < words_store_count(); ++i)
+        {
+            if (!(words_store_index()[i].flags & WORDS_COLLECTED)) continue;
+            if (skipped++ < job->value) continue;
+            if (result->matches.count == WORDS_MATCH_MAX) { result->matches.more = true; break; }
+            words_record_t record;
+            if (!words_store_get(i, &record)) return false;
+            unsigned row = result->matches.count++;
+            strcpy(result->names[row], record.word); result->matches.entry[row] = i + 1;
+        }
+        result->offset = job->value; break;
+    }
+    case WORDS_QUOTA:
+        if (job->value > 200) return false;
+        words_store_config()->quota = job->value; words_store_config_changed(); result->accepted = true; break;
+    case WORDS_BOOKS: list_books(job, result); break;
+    case WORDS_BOOK_SELECT: ok = import_book(input, result); break;
+    }
+    summary(result, now);
+    return ok;
+}
+
+void words_cancel(uint32_t serial)
+{
+    rt_base_t level = rt_hw_interrupt_disable();
+    words_result_t *old = NULL;
+    if (serial && serial == generation) { ++generation; old = completed; completed = NULL; }
+    rt_hw_interrupt_enable(level); epd_app_free(old);
+}
+
+uint32_t words_submit(const words_job_t *job)
+{
+    rt_base_t level = rt_hw_interrupt_disable();
+    if (!worker || stopping || epd_service_cancelled(worker) || queue_count == JOB_COUNT) { rt_hw_interrupt_enable(level); return 0; }
+    words_result_t *old = completed; completed = NULL;
+    ++generation; if (!generation) ++generation;
+    jobs[(queue_head + queue_count) % JOB_COUNT] = *job;
+    jobs[(queue_head + queue_count) % JOB_COUNT].serial = generation;
+    ++queue_count; uint32_t serial = generation;
+    rt_hw_interrupt_enable(level);
+    epd_app_free(old); epd_service_wake(worker); return serial;
+}
+
+words_result_t *words_take(uint32_t serial, bool *failed)
+{
+    rt_base_t level = rt_hw_interrupt_disable();
+    words_result_t *result = completed;
+    if (result && result->serial == serial) completed = NULL; else result = NULL;
+    *failed = serial && failed_serial == serial;
+    rt_hw_interrupt_enable(level); return result;
+}
+
+static void run(epd_service_t *service)
+{
+    bool ready = words_store_open(); daily_day = INT32_MIN; active_slot = 0;
+    if (ready) ready = storage_file_recover(BOOK_FILE);
+    for (;;)
+    {
+        if (epd_service_cancelled(service)) break;
+        words_job_t job = {0};
+        rt_base_t level = rt_hw_interrupt_disable();
+        bool pending = queue_count != 0;
+        if (pending) { job = jobs[queue_head]; queue_head = (queue_head + 1) % JOB_COUNT; --queue_count; }
+        rt_hw_interrupt_enable(level);
+        if (!pending)
+        {
+            bool saved = !ready || words_store_flush();
+            level = rt_hw_interrupt_disable();
+            if (flush_requested) { flush_requested = false; flush_success = saved; flush_finished = true; }
+            rt_hw_interrupt_enable(level);
+            if (epd_service_cancelled(service)) break;
+            epd_service_wait(service, RT_WAITING_FOREVER); continue;
+        }
+        if (cancellable(job.kind) && stale(&job)) continue;
+        words_result_t *result = epd_app_alloc(sizeof(*result), EPD_APP_PSRAM);
+        if (!result)
+        { level = rt_hw_interrupt_disable(); failed_serial = job.serial; rt_hw_interrupt_enable(level); continue; }
+        memset(result, 0, sizeof(*result)); result->serial = job.serial;
+        input_t input = {&job, NULL, -1};
+        bool ok = !ready || words_store_flush();
+        if (ok) ok = execute(&input, result, ready);
+        if (!ok && !result->error[0]) snprintf(result->error, sizeof(result->error), "%s",
+              words_store_error()[0] ? words_store_error() : "词库读取失败");
+        level = rt_hw_interrupt_disable();
+        if (job.serial == generation && !stopping && !epd_service_cancelled(service)) { completed = result; result = NULL; }
+        rt_hw_interrupt_enable(level); epd_app_free(result);
+        /* Publish first; persistence is not an LVGL-thread operation. */
+        if (ready && !words_store_flush()) rt_kprintf("words: %s\n", words_store_error());
+    }
+    if (ready && storage_app_available("words")) words_store_flush();
+    words_store_close();
+    rt_base_t level = rt_hw_interrupt_disable(); worker = NULL; rt_hw_interrupt_enable(level);
+}
+
+bool words_service_flush(void)
+{
+    rt_base_t level = rt_hw_interrupt_disable();
+    if (!worker) { rt_hw_interrupt_enable(level); return !words_store_dirty(); }
+    if (epd_service_cancelled(worker)) { rt_hw_interrupt_enable(level); return false; }
+    flush_requested = true; flush_finished = false;
+    rt_hw_interrupt_enable(level); epd_service_wake(worker);
+    for (unsigned i = 0; i < 500; ++i)
+    {
+        level = rt_hw_interrupt_disable(); bool done = flush_finished, ok = flush_success;
+        bool cancelled = !worker || epd_service_cancelled(worker);
+        rt_hw_interrupt_enable(level);
+        if (done) return ok;
+        if (cancelled) return false;
+        rt_thread_mdelay(10);
+    }
+    return false;
+}
+
+static const epd_background_t definition = {.run = run, .stack_size = 6144, .priority = 25, .flush = words_service_flush};
+bool words_service_start(void)
+{
+    if (worker) return !stopping;
+    if (!storage_app_path(book_file, sizeof(book_file), "words", STORAGE_APP_DATA, "book.wdb") ||
+        !storage_app_path(book_temp, sizeof(book_temp), "words", STORAGE_APP_DATA, "book.import")) return false;
+    stopping = false; queue_head = queue_count = 0;
+    worker = app_service_start("words", &definition, dlmodule_find("words"));
+    return worker != NULL;
+}
+void words_service_stop(void)
+{
+    words_cancel(generation);
+    rt_base_t level = rt_hw_interrupt_disable(); stopping = true; rt_hw_interrupt_enable(level);
+    app_service_stop("words");
+}

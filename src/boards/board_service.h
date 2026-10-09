@@ -19,7 +19,7 @@ extern "C" {
 void board_power_up(void);
 
 /**
- * @brief 挂载文件系统（TF 卡优先，其次内置 flash），挂载点为 "/"
+ * @brief Mount internal Flash at /flash and start asynchronous SD card management.
  */
 void board_start_filesystem(void);
 
@@ -35,6 +35,7 @@ void board_wakeup_filesystem(void);
 
 /**
  * @brief 进入关机/深睡前的板级处理：
+ *        从 UI 线程调用；先同步应用数据，写入失败时不执行后续下电操作。
  *        SD 卡下电、触摸屏下电（防止 GT967 中断误唤醒）、关闭 GPIO1 唤醒源、整机断电
  */
 void board_prepare_to_sleep(void);

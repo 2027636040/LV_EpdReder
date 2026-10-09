@@ -1,16 +1,36 @@
 from building import *
 import os
+import zlib
+
+
+def compress_font(target, source, env):
+    with open(str(source[0]), 'rb') as stream:
+        data = stream.read()
+    compressed = zlib.compress(data, 9)
+    with open(str(target[0]), 'wb') as stream:
+        stream.write(compressed)
+    print('Builtin font: %d -> %d bytes (zlib)' % (len(data), len(compressed)))
+    return 0
+
 
 font_objs = []
 cwd = GetCurrentDir()
-font_file = os.path.join(cwd, 'DroidSansFallback.ttf')
+font_file = os.path.join(cwd, 'MiSans-Normal.ttf')
 
 if not os.path.exists(font_file):
     print("Warning: Font file not found: " + font_file)
     font_objs = []
 else:
     print("Font file path: " + font_file)
-    font_objs = Env.ConvertFont(font_file, 'epub_ttf_data')
-    font_objs = DefineGroup('font_resource', font_objs, depend = [])
+    with open(font_file, 'rb') as font_stream:
+        font_data = font_stream.read()
+    signature = zlib.crc32(font_data)
+    font_size = len(font_data)
+    compressed_font = Env.Command('MiSans-Normal.z', font_file, compress_font)
+    font_objs = Env.ConvertFont(compressed_font, 'epub_ttf_zlib_data')
+    font_objs += Glob('font_identity.c')
+    font_objs = DefineGroup('font_resource', font_objs, depend = [],
+                           LOCAL_CPPDEFINES=[('UI_BUILTIN_FONT_SIGNATURE', '0x%08Xu' % signature),
+                                             ('UI_BUILTIN_FONT_SIZE', '%du' % font_size)])
 
 Return('font_objs')

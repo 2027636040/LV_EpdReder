@@ -9,12 +9,11 @@
  * 典型状态流转：
  *   OFF → INITIALIZING → READY（等待手机连接）
  *       → CONNECTED（手机已连接，链路建立）
- *       → NETWORK_READY（PAN 网络已通，可以访问互联网）
+ *       → NETWORK_READY（PAN profile 已连接；IP/网关通过 network 服务查询）
  *
  * 线程说明：
  *  - 所有接口线程安全，可在任意线程 / UI 线程调用；
- *  - 事件回调运行在蓝牙服务线程上下文，UI 中请勿直接操作 LVGL，
- *    应通过 lv_async_call() 或消息队列切回 UI 线程后再刷新界面。
+ *  - 业务联网状态通过 network.h 的多订阅者事件接口获取。
  *
  * 命名说明：对外前缀 btpan_（SDK 中 bt_pan_ 前缀已被占用，避免符号冲突）。
  */
@@ -35,11 +34,8 @@ typedef enum
     BTPAN_STATE_INITIALIZING,  /**< 蓝牙协议栈启动中 */
     BTPAN_STATE_READY,         /**< 蓝牙就绪，等待手机连接 */
     BTPAN_STATE_CONNECTED,     /**< 手机已连接（链路建立），网络未就绪 */
-    BTPAN_STATE_NETWORK_READY, /**< PAN 网络已连通，可访问互联网 */
+    BTPAN_STATE_NETWORK_READY, /**< PAN profile connected; query network for IP readiness. */
 } btpan_state_t;
-
-/** 状态变化回调（服务线程上下文调用，UI 请转投 UI 线程） */
-typedef void (*btpan_event_cb_t)(btpan_state_t state);
 
 /* ==================== 生命周期 ==================== */
 
@@ -63,7 +59,7 @@ rt_err_t btpan_enable(bool enable);
 /**
  * @brief 主动请求建立 PAN 连接（手机已配对连接后调用）
  * @note 手机刚配对（或有历史配对）且链路已建立时，由本接口发起 PAN 连接；
- *       天气服务在需要网络时会自行调用，UI 通常无需直接调用。
+ *       PAN 工作线程负责重连，业务应用不直接调用。
  */
 rt_err_t btpan_request_connect(void);
 
@@ -75,16 +71,8 @@ btpan_state_t btpan_get_state(void);
 bool btpan_is_ready(void);
 /** 手机是否已连接（链路建立） */
 bool btpan_is_connected(void);
-/** PAN 网络是否已连通（可访问互联网） */
+/** PAN profile connected; this does not check DHCP, DNS or Internet access. */
 bool btpan_is_network_ready(void);
-
-/* ==================== 事件 ==================== */
-
-/**
- * @brief 注册状态变化回调（可传 NULL 注销）
- * @note 单回调槽位；UI 多方需要时请在 UI 层统一分发。
- */
-void btpan_set_event_cb(btpan_event_cb_t cb);
 
 /* ==================== 本机蓝牙 MAC 地址 ==================== */
 

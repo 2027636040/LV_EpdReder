@@ -6,49 +6,7 @@
         "regions": [
             {
                 "offset": "0x00020000",
-                "max_size": "0x00060000",
-                "tags": [
-                    "DFU_FLASH_CODE"
-                ],
-                "name": "dfu",
-                "type": ["app_img", "app_exec"]
-            },
-            {
-                "offset": "0x00080000",
-                "max_size": "0x00120000",
-                "tags": [
-                    "DFU_DOWNLOAD_REGION"
-                ]
-            },
-            {
-                "offset": "0x001A0000", 
-                "max_size": "0x00004000", 
-                "tags": [
-                    "KVDB_DFU_REGION"
-                ]
-            }, 
-            {
-                "offset": "0x001A4000", 
-                "max_size": "0x00004000", 
-                "tags": [
-                    "KVDB_BLE_REGION"
-                ]
-            },
-            {
-                "offset": "0x001B0000",
-                "max_size": "0x00010000",
-                "name": "weather_store",
-                "tags": ["WEATHER_STORE"]
-            },
-            {
-                "offset": "0x001C0000",
-                "max_size": "0x00002000",
-                "name": "settings_store",
-                "tags": ["SETTINGS_STORE"]
-            },
-            {
-                "offset": "0x00200000", 
-                "max_size": "0x00200000", 
+                "max_size": "0x00200000",
                 "tags": [
                     "HCPU_FLASH_CODE"
                 ], 
@@ -56,8 +14,8 @@
                 "type": ["app_img", "app_exec"]
             }, 
             {
-                "offset": "0x00400000", 
-                "max_size": "0x00A00000", 
+                "offset": "0x00220000",
+                "max_size": "0x00800000",
                 "tags": [
                     "BUILTIN_RESOURCE"
                 ],
@@ -65,26 +23,34 @@
                 "type": ["app_img"]
             },
             {
-                "offset": "0x00E00000", 
+                "offset": "0x00A20000",
                 "max_size": "0x00020000",
                 "name": "acpu",
                 "core": "acpu",
                 "type": ["app_img", "app_exec"]
             },
             {
-                "offset": "0x00E20000",
-                "max_size": "0x000C0000",
-                "name": "fs_root", 
+                "offset": "0x00A40000",
+                "max_size": "0x00004000",
+                "name": "ble_store",
                 "tags": [
-                    "FS_REGION"
+                    "KVDB_BLE_REGION"
                 ]
             },
             {
-                "offset": "0x00EE0000",
+                "offset": "0x00A44000",
                 "max_size": "0x00040000",
                 "name": "wave_table",
                 "tags": [
                     "CUSTOM_EPD_WAVE_TABLE"
+                ]
+            },
+            {
+                "offset": "0x00A84000",
+                "max_size": "0x0057C000",
+                "name": "fs_root",
+                "tags": [
+                    "FS_REGION"
                 ]
             }
         ]

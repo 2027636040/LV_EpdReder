@@ -2,7 +2,10 @@ from building import *
 
 objs = []
 if GetDepend('EPD_USE_LVGL') and GetDepend('LV_USE_EZIP'):
-    images = Glob('ezip/icons/*.png') + Glob('ezip/weather/*.png')
+    weather_private = {'weather', 'location', 'humidity', 'wind', 'visibility',
+                       'cloud', 'sunrise', 'sunset', 'pressure', 'air'}
+    images = [image for image in Glob('ezip/icons/*.png')
+              if image.name.removeprefix('ui_icon_').removesuffix('.png') not in weather_private]
     if not images:
         raise RuntimeError('EZIP inputs are missing; run the icon generation scripts.')
 
