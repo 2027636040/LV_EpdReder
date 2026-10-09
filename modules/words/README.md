@@ -78,21 +78,23 @@ python tools/build_dictionary.py <ecdict.csv> output/dictionaries/cet4.wdb --tag
 
 主固件需要包含首批查词版本增加的通用 LVGL 键盘、输入框和文字测量导出。第二版学习接入复用已有导出，没有增加宿主接口；已使用首批兼容固件时，只安装新版单词包即可。SDK 指针仍为 `a25ebcc`，不需要修改 SDK 源码或分区。
 
-构建前需要安装 Node.js 和 `sharp`（在本模块目录执行 `npm install --no-save --package-lock=false sharp`，或通过 `NODE_PATH` 指向已有依赖）。首次准备随包四级词库时，在本模块目录执行：
+只有选择构建单词应用时才需要 Node.js、`sharp` 和词库；平台及其他应用不依赖这些内容。
+在本模块目录执行 `npm install --no-save --package-lock=false sharp`，或通过 `NODE_PATH` 指向已有依赖。
+首次准备随包四级词库时，在本模块目录执行：
 
 ```powershell
 python tools/build_dictionary.py <ecdict.csv> output/dictionaries/cet4.wdb --tag cet4
 ```
 
-词库及同目录的 `cet4.wdb.json` 准备完成后，在仓库根目录激活 SDK 环境并正常编译：
+词库及同目录的 `cet4.wdb.json` 准备完成后，在仓库根目录激活 SDK 环境并显式选择单词应用：
 
 ```powershell
 . .\SiFli-SDK\export.ps1
-Set-Location project
-scons --board=dpi-hdk_lb57gyd7n6_epd_hcpu -j8
+scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu -j8
+scons -C modules APPS=words -j8
 ```
 
-主构建自动编译 `words.so`、从 `assets/icon.svg` 生成入口图标，并将四级词库、来源报告和两份许可打包到：
+已有配套固件时，只需执行应用构建命令。该命令编译 `words.so`、从 `assets/icon.svg` 生成入口图标，并将四级词库、来源报告和两份许可打包到：
 
 ```text
 project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/app-resources/words/
@@ -106,12 +108,15 @@ project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/app-resources/words/
     res/LICENSE.fsrs
 ```
 
-源码、图标、清单、词库、报告或许可文件改变后，下一次主构建会自动更新这个目录，不需要单独进入模块编译或手动复制安装包。已有词库文件不会在构建时重新从 CSV 转换或从网络下载。需要使用其他随包词库时，在 `project` 目录执行 `scons --board=dpi-hdk_lb57gyd7n6_epd_hcpu WORDS_DICTIONARY=<词库绝对路径.wdb> -j8`，同时提供该词库旁边的 `.wdb.json`；以后构建该词库时继续传入相同参数。
+源码、图标、清单、词库、报告或许可文件改变后，再次执行 `scons -C modules APPS=words -j8` 会更新这个目录，不需要手动复制安装包。已有词库文件不会在构建时重新从 CSV 转换或从网络下载。
+需要使用其他随包词库时，在仓库根目录执行 `scons -C modules APPS=words WORDS_DICTIONARY=<词库绝对路径.wdb> -j8`，同时提供该词库旁边的 `.wdb.json`；以后构建该词库时继续传入相同参数。
+一次构建平台和单词包时使用 `scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu APPS=words -j8`。
+批量构建见 [平台与应用构建](../../docs/BUILDING.md)。
 
 把 `app-resources/words` 整个目录复制到 TF 卡的 `apps/words`，通过系统“应用安装”选择安装。
 首次安装选择内部存储或 TF 卡；TF 卡安装目录为 `.epd/apps/words`，与安装包来源目录分开。
 随包词库保留在所选安装目录，学习记录、配置及导入词书使用同卷的 `data/words`。
-安装包不是固件镜像，不能直接交给串口刷写脚本。单词应用没有加入出厂 `fs_root.bin`，安装它不需要重刷或格式化内部文件系统。
+安装包不是固件镜像，不能直接交给串口刷写脚本。单词应用默认不加入出厂 `fs_root.bin`，安装它不需要重刷或格式化内部文件系统。
 
 仅重新打包已有编译产物时，可以在本模块目录执行 `python tools/package_words.py`，默认也更新当前板级目录的 `app-resources/words`；该命令不编译模块。`--firmware` 可指定其他已构建的固件目录，`--dictionary` 可指定词库，`--output` 仅用于另存到尚不存在的归档目录。
 

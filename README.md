@@ -20,18 +20,24 @@
 
 ## 构建
 ```powershell
-# 1. 激活 SiFli 环境（以本机 SDK 路径为准）
-. <SiFli-SDK>\export.ps1
+# 在仓库根目录激活环境
+. .\SiFli-SDK\export.ps1
 
-# 2. 编译
-cd project
-scons --board=dpi-hdk_lb57gyd7n6_epd --board_search_path=.. -j8
+# 编译平台和初始文件系统镜像，不构建动态应用
+scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu -j8
 
-# 3. 烧录
-project\build_dpi-hdk_lb57gyd7n6_epd_hcpu\uart_download.bat
+# 可选：使用已有平台固件，单独或批量编译应用
+scons -C modules APPS=weather -j8
+scons -C modules APPS=books,gallery -j8
+# 所有正式应用，包括需要另备词库和 sharp 的单词应用
+# scons -C modules APPS=all -j8
 ```
 
-> 构建时自动打包：`disk/` → fs_root 分区；`waveform/epd_waveform.bin` → wave_table 分区（256KB）。
+动态应用安装包输出到 `project/build_<board>/app-resources/<应用ID>/`。
+平台构建不要求安装 Node.js、`sharp` 或准备单词词库。应用按需安装，允许设备不安装任何动态应用。
+编译选择、出厂预装和下载说明见 [平台与应用构建](docs/BUILDING.md)。
+平台构建使用 SDK 自带工具生成 `fs_root.bin`，不需要 Visual Studio；波形仍随平台下载。
+文件系统镜像只有显式使用 `STORAGE_IMAGE=1` 或 `STORAGE_IMPORT` 才加入下载清单。
 
 ## 目录结构
 ```

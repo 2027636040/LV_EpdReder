@@ -36,7 +36,8 @@
 
 ## 部署
 
-普通固件构建自动编译天气模块、核对外部符号并生成完整安装目录：
+平台默认不构建天气应用。完成平台编译后，在仓库根目录执行
+`scons -C modules APPS=weather -j8`，编译天气模块、核对外部符号并生成完整安装目录：
 
 ```text
 project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/app-resources/weather/
@@ -55,9 +56,11 @@ project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/app-resources/weather/
 再替换或删除程序与资源，清理可重建缓存，保留天气配置。卸载后主页不再显示该服务的旧摘要。
 停止与事务规则见 [后台生命周期与网络](APPLICATION_LIFECYCLE.md)。
 
-首次初始化使用 `STORAGE_IMAGE=1`，完整天气包随 LittleFS 镜像一起生成。
-旧分区升级使用 `STORAGE_IMPORT=<备份目录>`，构建在临时目录中叠加天气包，
+首次初始化并预装天气时，平台构建使用 `STORAGE_IMAGE=1 PREINSTALL=weather`，完整天气包随 LittleFS 镜像一起生成。
+旧分区升级使用 `STORAGE_IMPORT=<备份目录> PREINSTALL=weather`，构建在临时目录中叠加天气包，
 不修改原备份；备份里已有 `apps/weather` 时保留该目录，旧包需通过上述安装流程更新。
+不指定 `PREINSTALL` 就不叠加天气包，已有设备可以只安装应用而不刷写文件系统。
+完整命令见 [平台与应用构建](BUILDING.md)。
 旧布局设备仍必须先完成 [存储迁移](STORAGE_MIGRATION.md)，不能直接烧录新布局。
 
 ## 运行时所有权

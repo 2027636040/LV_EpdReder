@@ -69,11 +69,13 @@ JPEGD 与 LVGL 通过 SDK 的 GPU 锁串行使用共享硬件。解码线程以�
 
 ```powershell
 . .\SiFli-SDK\export.ps1
-Set-Location project
-scons --board=dpi-hdk_lb57gyd7n6_epd_hcpu HANG_DIAG=1 TLS_CERT_DIAG=1 -j8
+scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu HANG_DIAG=1 TLS_CERT_DIAG=1 -j8
+scons -C modules APPS=gallery -j8
 ```
 
-固件构建自动生成图库、天气和书架的配套应用包，并检查所有模块导入符号。新增平台接口会改变应用兼容标识，已有天气和书架需更新同一构建目录中的完整应用包。普通固件下载保留内部文件系统。
+首次先编译平台；已有配套固件时，只需执行应用构建命令。该命令只构建图库安装包，并检查图库模块导入符号。
+新增平台接口会改变应用兼容标识，其他已安装应用也需按需重新构建配套包。普通固件下载保留内部文件系统。
+批量构建和可选预装见 [平台与应用构建](../../docs/BUILDING.md)。
 
 上板检查：两种存储读取；横竖图等比缩放和 16 灰阶；透明与交错 PNG；大 JPEG；读取中返回或拔卡；反复打开退出后检查 RAM0/RAM1 是否回收。使用同一原图分别比较首次打开与出现 `gray16 cache hit` 的再次打开；修改同路径图片内容后应重新解码。
 

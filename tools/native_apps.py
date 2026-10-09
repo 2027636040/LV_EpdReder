@@ -1,5 +1,6 @@
 """Build native modules and their independent EZIP application packages."""
 import json
+import re
 from pathlib import Path
 import struct
 import subprocess
@@ -12,6 +13,38 @@ from check_app_imports import verify
 
 SYMBOLS = ('location', 'humidity', 'wind', 'visibility', 'cloud',
            'sunrise', 'sunset', 'pressure', 'air')
+
+
+def select_apps(value):
+    """Resolve an explicit selection without reading any application sources."""
+    names = [name.strip() for name in value.split(',') if name.strip()]
+    if not names or names == ['none']:
+        return []
+    if names == ['all']:
+        return list(PACKAGE_BUILDERS)
+    unknown = set(names) - PACKAGE_BUILDERS.keys()
+    if unknown:
+        raise ValueError('Unknown APPS/PREINSTALL: ' + ', '.join(sorted(unknown)) +
+                         '; choose ' + ','.join(PACKAGE_BUILDERS) + ', all or none')
+    return list(dict.fromkeys(names))
+
+
+def add_selected_packages(env, sdk, repo, names, dictionary=None):
+    if not names:
+        return {}
+    repo = Path(repo).resolve()
+    for name in names:
+        for source in ('SConstruct', 'app.json'):
+            path = repo / 'modules' / name / source
+            if not path.is_file():
+                raise ValueError('Selected application source is missing: ' + str(path))
+    config = (Path(env['build_dir']) / 'rtconfig.h').read_text(encoding='utf-8')
+    defines = dict(re.findall(r'^#define[ \t]+(\w+)[ \t]*([^\r\n]*)', config, re.MULTILINE))
+    rgb565 = defines.get('LV_COLOR_DEPTH', '').strip() == '16'
+    palette = (1 if 'EZIP_PAL_SUPPORT_1' in defines else 0) if 'EZIP_PAL_SUPPORT' in defines else None
+    return {name: PACKAGE_BUILDERS[name](env, sdk, repo, rgb565, palette,
+                                        **({'dictionary': dictionary} if name == 'words' else {}))
+            for name in names}
 
 
 def add_package(env, sdk, repo, app_id, inputs, rgb565=True, palette=None, resources=None,
@@ -65,9 +98,9 @@ def add_package(env, sdk, repo, app_id, inputs, rgb565=True, palette=None, resou
     def compile_module(target, source, env):
         for directory, name in library_projects:
             subprocess.run([sys.executable, '-m', 'SCons', '-C', str(directory),
-                            'FIRMWARE=' + build.name, '-j8'], check=True)
+                            'FIRMWARE=' + str(build), '-j' + str(env.get('APP_JOBS', 8))], check=True)
         subprocess.run([sys.executable, '-m', 'SCons', '-C', str(module_dir),
-                        'FIRMWARE=' + build.name, '-j8'], check=True)
+                        'FIRMWARE=' + str(build), '-j' + str(env.get('APP_JOBS', 8))], check=True)
         return 0
 
     module_inputs = [str(p) for p in sorted(module_dir.rglob('*')) if p.is_file() and
@@ -76,7 +109,7 @@ def add_package(env, sdk, repo, app_id, inputs, rgb565=True, palette=None, resou
                      (p.suffix in ('.c', '.cc', '.cpp', '.cxx', '.h', '.hpp', '.inc', '.py', '.map') or
                       p.name in ('SConstruct', 'SConscript'))]
     module_inputs += [str(profile), str(build / 'epd_app_profile.h'), str(build / 'rtconfig.h'),
-                      str(build / 'cconfig.h'), str(repo / 'project/rtua.py'), __file__]
+                      str(build / 'cconfig.h'), str(build / 'rtua.py'), __file__]
     if app_id in ('books', 'gallery'):
         module_inputs += [str(p) for directory in ('modules/common/image', 'modules/gallery/third_party')
                           for p in sorted((repo / directory).rglob('*')) if p.is_file() and
@@ -85,6 +118,8 @@ def add_package(env, sdk, repo, app_id, inputs, rgb565=True, palette=None, resou
                               Action(compile_module, 'MODULE ' + app_id + '.so'))
 
     def manifest(target, source, env):
+        for compiled in [module] + library_modules:
+            verify(compiled, build / 'main.elf', env['APP_NM'])
         root.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=app_id + '-', dir=root.parent) as temporary:
             staged = Path(temporary) / app_id
@@ -115,18 +150,12 @@ def add_package(env, sdk, repo, app_id, inputs, rgb565=True, palette=None, resou
     outputs += [str(root / name) for name in asset_names]
     outputs += [str(root / 'codecs' / path.name) for path in library_modules]
     package = env.Command(outputs, images + module_node +
-                          [str(profile), str(module_dir / 'app.json'), __file__,
-                           str(Path(__file__).with_name('package_app.py')), Value(asset_names)],
+                          [str(profile), str(build / 'main.elf'), str(module_dir / 'app.json'), __file__,
+                           str(Path(__file__).with_name('package_app.py')),
+                           str(Path(__file__).with_name('check_app_imports.py')), Value(asset_names)],
                           Action(manifest, app_id + ' application package'))
-    def check_imports(target, source, env):
-        import rtconfig
-        nm = Path(rtconfig.EXEC_PATH) / 'arm-none-eabi-nm.exe'
-        verify(module, build / 'main.elf', nm)
-        for library in library_modules:
-            verify(library, build / 'main.elf', nm)
-        return 0
-
-    env.AddPostAction(env['target'], Action(check_imports, 'Check ' + app_id + ' module imports'))
+    # The action publishes a complete directory; retain the previous package on failure.
+    env.Precious(package)
     return root, package
 
 
@@ -179,8 +208,16 @@ def add_words_package(env, sdk, repo, rgb565=True, palette=None, dictionary=None
     env.Command(str(icon), [str(module_dir / 'assets/icon.svg'), str(renderer)],
                 Action(render_icon, 'Render words icon'))
     dictionary = Path(dictionary).resolve() if dictionary else module_dir / 'output/dictionaries/cet4.wdb'
+    for source in (dictionary, dictionary.with_suffix('.wdb.json')):
+        if not source.is_file():
+            raise ValueError('words requires dictionary and report: ' + str(source) +
+                             '; see modules/words/README.md or set WORDS_DICTIONARY=<file.wdb>')
     resources = {'library.wdb': dictionary,
                  'library.wdb.json': dictionary.with_suffix('.wdb.json'),
                  'LICENSE.ecdict': module_dir / 'LICENSE.ecdict',
                  'LICENSE.fsrs': module_dir / 'LICENSE.fsrs'}
     return add_package(env, sdk, repo, 'words', {'icon.ezip': icon}, rgb565, palette, resources)
+
+
+PACKAGE_BUILDERS = {'weather': add_weather_package, 'books': add_books_package,
+                    'gallery': add_gallery_package, 'words': add_words_package}

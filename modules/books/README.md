@@ -41,11 +41,12 @@ PNG、JPEG 插图与图库共用逐行/分块解码组件，等比缩放后按 1
 
 ```powershell
 . .\SiFli-SDK\export.ps1
-cd project
-scons --board=dpi-hdk_lb57gyd7n6_epd_hcpu -j8
+scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu -j8
+scons -C modules APPS=books -j8
 ```
 
-固件构建自动编译 `modules/books/output/books.so`，校验全部外部符号，并生成
+首次先编译平台；已有配套固件时，只需执行应用构建命令。
+应用构建编译 `modules/books/output/books.so` 及私有解码库，校验全部外部符号，并生成
 `project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/app-resources/books/`：
 
 ```text
@@ -68,7 +69,9 @@ MOBI 解码库属于书架安装包，不作为桌面应用单独安装。打开
 分别位于 `/flash/apps/books/` 或 `/sdcard/.epd/apps/books/`。更新沿用原位置；更换位置先卸载再重装，阅读记录保留。
 主固件与应用包必须具有相同的构建配置标识；平台接口变化后要一起重新编译，包括天气等已安装模块。
 
-出厂 `fs_root.bin` 包含书架、天气和图库包。烧录该镜像会覆盖内部文件系统；已有设备可通过 TF 卡安装/更新应用包，保留内部用户文件。
+出厂镜像不自动包含应用；需要预装书架时显式传入 `STORAGE_IMAGE=1 PREINSTALL=books`。
+烧录该镜像会覆盖内部文件系统；已有设备可通过 TF 卡安装/更新应用包，保留内部用户文件。
+批量构建和预装列表见 [平台与应用构建](../../docs/BUILDING.md)。
 安装器会在目标存储上暂存完整新包，再替换旧包。更新前需要为新包及文件系统开销留出空间，不能仅按新旧包的大小差计算；MOBI 私有库也计入书架包的存储占用。
 
 ## 服务与数据

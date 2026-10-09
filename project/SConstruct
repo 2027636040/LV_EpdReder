@@ -45,6 +45,9 @@ DoBuilding(TARGET, objs)
 import building
 from ua import PrepareUA
 PrepareUA(building.Projects, os.path.join(SIFLI_SDK, 'rtos/rtthread'), Dir('#').abspath)
+# Keep module include paths with the firmware they describe.
+import shutil
+shutil.copyfile('rtua.py', os.path.join(env['build_dir'], 'rtua.py'))
 
 # Configuration macros can change public structure layouts, so every compiled
 # object must depend on rtconfig.h even when it is included through a macro.
@@ -64,32 +67,19 @@ while pending_nodes:
 AddFTAB(SIFLI_SDK,rtconfig.CHIP)
 
 
-# Build the internal NOR image with the SDK LittleFS tool, not mkfatimg.
+# Optional application packages and factory filesystem composition.
 sys.path.insert(0, os.path.abspath('../tools'))
+from native_apps import select_apps, add_selected_packages
+apps = select_apps(ARGUMENTS.get('APPS', ''))
+preinstall = select_apps(ARGUMENTS.get('PREINSTALL', ''))
+env['APP_NM'] = os.path.join(rtconfig.EXEC_PATH, 'arm-none-eabi-nm.exe')
+env['APP_JOBS'] = GetOption('num_jobs')
+packages = add_selected_packages(env, SIFLI_SDK, '..', list(dict.fromkeys(apps + preinstall)),
+                                dictionary=ARGUMENTS.get('WORDS_DICTIONARY'))
 from lfs_image import add_image
-from native_apps import add_weather_package, add_books_package, add_gallery_package, add_words_package
-weather_package = add_weather_package(env, SIFLI_SDK, '..',
-                              rgb565=GetConfigValue('LV_COLOR_DEPTH') == 16,
-                              palette=(1 if GetDepend('EZIP_PAL_SUPPORT_1') else 0)
-                                      if GetDepend('EZIP_PAL_SUPPORT') else None)
-books_package = add_books_package(env, SIFLI_SDK, '..',
-                                 rgb565=GetConfigValue('LV_COLOR_DEPTH') == 16,
-                                 palette=(1 if GetDepend('EZIP_PAL_SUPPORT_1') else 0)
-                                         if GetDepend('EZIP_PAL_SUPPORT') else None)
-gallery_package = add_gallery_package(env, SIFLI_SDK, '..',
-                                 rgb565=GetConfigValue('LV_COLOR_DEPTH') == 16,
-                                 palette=(1 if GetDepend('EZIP_PAL_SUPPORT_1') else 0)
-                                         if GetDepend('EZIP_PAL_SUPPORT') else None)
-words_package = add_words_package(env, SIFLI_SDK, '..',
-                                 rgb565=GetConfigValue('LV_COLOR_DEPTH') == 16,
-                                 palette=(1 if GetDepend('EZIP_PAL_SUPPORT_1') else 0)
-                                         if GetDepend('EZIP_PAL_SUPPORT') else None,
-                                 dictionary=ARGUMENTS.get('WORDS_DICTIONARY'))
-# Build the installable words package without adding it to the factory image.
-env.Depends(env['target'], words_package[1])
 fs_bin = add_image(env, SIFLI_SDK, ARGUMENTS.get('STORAGE_IMPORT'),
-                   [weather_package, books_package, gallery_package])
-# Factory/recovery image is opt-in: ordinary firmware download keeps user files.
+                   [packages[name] for name in preinstall])
+# Always build the image; downloading it remains an explicit initialization step.
 if ARGUMENTS.get('STORAGE_IMAGE') == '1' or ARGUMENTS.get('STORAGE_IMPORT'):
     AddCustomImg('fs_root', bin=[fs_bin])
 if ARGUMENTS.get('STORAGE_IMPORT'):

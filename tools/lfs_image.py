@@ -29,36 +29,6 @@ def verify_import(directory):
     return directory / 'flash'
 
 
-def tool_sources(sdk):
-    sdk = Path(sdk).resolve()
-    return [sdk / 'tools/mklfsimg/mklfsimg/mklfs.c', sdk / 'tools/mklfsimg/mklfsimg/getopt.c',
-            sdk / 'rtos/rtthread/components/dfs/filesystems/littlefs/lfs.c',
-            sdk / 'rtos/rtthread/components/dfs/filesystems/littlefs/lfs_util.c']
-
-
-def build_tool(target, sdk):
-    """Use the SDK sources unchanged; a process manifest makes Win32 ANSI APIs UTF-8."""
-    target = Path(target).resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    vswhere = Path(os.environ['ProgramFiles(x86)']) / 'Microsoft Visual Studio/Installer/vswhere.exe'
-    vs = subprocess.check_output([str(vswhere), '-latest', '-products', '*', '-requires',
-                                  'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
-                                  '-property', 'installationPath'], text=True).strip()
-    if not vs:
-        raise RuntimeError('Visual Studio C++ build tools are required for the SDK image tool')
-    vcvars = Path(vs) / 'VC/Auxiliary/Build/vcvars64.bat'
-    output = subprocess.check_output(f'"{vcvars}" >nul && set', shell=True,
-                                      text=True, errors='replace')
-    environment = dict(line.split('=', 1) for line in output.splitlines() if '=' in line and not line.startswith('='))
-    compiler = Path(environment['VCToolsInstallDir']) / 'bin/Hostx64/x64/cl.exe'
-    lfs = Path(sdk).resolve() / 'rtos/rtthread/components/dfs/filesystems/littlefs'
-    subprocess.run([str(compiler), '/nologo', '/O2', '/std:c11', '/utf-8',
-                    '/D_CRT_SECURE_NO_WARNINGS', '/I' + str(lfs),
-                    *map(str, tool_sources(sdk)), '/Fe:' + str(target), '/link', '/MANIFEST:EMBED',
-                    '/MANIFESTINPUT:' + str(Path(__file__).with_name('mklfsimg.manifest'))],
-                   cwd=target.parent, env=environment, check=True)
-
-
 def build_image(directory, target, tool, ptab):
     directory, target = Path(directory).resolve(), Path(target).resolve()
     _, size = flash_region(ptab, 'fs_root')
@@ -71,6 +41,11 @@ def build_image(directory, target, tool, ptab):
     for file in directory.rglob('*'):
         if file.is_symlink():
             raise ValueError('Image source must not contain symlinks: ' + str(file))
+        name = file.relative_to(directory).as_posix()
+        # The SDK executable stores FindFirstFileA names without transcoding.
+        if name.encode('mbcs', errors='replace') != name.encode('utf-8'):
+            raise ValueError('SDK mklfsimg uses Windows ANSI filenames, which differ from device UTF-8: ' +
+                             name + '; use ASCII image filenames or a UTF-8 Windows system locale')
         if len(str(file).encode('utf-8')) >= 256:
             raise ValueError('SDK image tool path exceeds 255 bytes: ' + str(file))
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -85,23 +60,14 @@ def add_image(env, sdk, migration=None, packages=()):
     directory = verify_import(migration) if migration else Path('../disk').resolve()
     ptab = env['PARTITION_TABLE']
     target = str(Path(env['build_dir']) / 'fs_root.bin')
-    tool = Path(env['build_dir']) / 'host/mklfsimg.exe'
-
-    def compile_tool(target, source, env):
-        build_tool(str(target[0]), sdk)
-        return 0
-
-    lfs = Path(sdk) / 'rtos/rtthread/components/dfs/filesystems/littlefs'
-    tool_node = env.Command(str(tool), [*map(str, tool_sources(sdk)), str(lfs / 'lfs.h'),
-                            str(lfs / 'lfs_util.h'), str(Path(__file__).with_name('mklfsimg.manifest')),
-                            __file__], compile_tool)
+    tool = Path(sdk).resolve() / 'tools/mklfsimg/mklfsimg.exe'
     files = sorted(p for p in directory.rglob('*') if p.is_file())
 
     def action(target, source, env):
         if migration:
             verify_import(migration)
-        # Overlay built-in app resources without changing disk/ or the old backup.
-        with tempfile.TemporaryDirectory(prefix='lfs-', dir=tool.parent) as staging:
+        # Overlay selected app packages without changing disk/ or the old backup.
+        with tempfile.TemporaryDirectory(prefix='lfs-', dir=Path(str(target[0])).parent) as staging:
             staging = Path(staging)
             shutil.copytree(directory, staging, dirs_exist_ok=True)
             for package, nodes in packages:
@@ -112,12 +78,12 @@ def add_image(env, sdk, migration=None, packages=()):
         return 0
 
     dependencies = [str(p) for p in files] + [str(ptab), __file__,
-                    tool_node,
-                    Value(str(directory) + '\n' + '\n'.join(str(p) for p in files))]
+                    str(tool),
+                    Value(str(directory) + '\n' + '\n'.join(str(p) for p in files)),
+                    Value([package.name for package, nodes in packages])]
     if migration:
         dependencies += [str(Path(migration) / 'migration.json'), str(Path(migration) / 'ble.bin')]
     for package, nodes in packages:
         dependencies += nodes
-    nodes = env.Command(target, dependencies, Action(action, 'LittleFS $TARGET'))
-    env.Depends(env['target'], nodes)
+    env.Command(target, dependencies, Action(action, 'LittleFS $TARGET'))
     return target

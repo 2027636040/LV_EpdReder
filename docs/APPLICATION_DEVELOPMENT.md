@@ -272,10 +272,12 @@ SDK、LVGL 配置或公开结构体改变后，应配套重新构建模块；该
 
 ### 编译示例
 
-主工程构建会自动生成天气、书架、图库和单词安装包，统一位于
-`project/build_<board>/app-resources/<应用ID>/`。源码和资源变化后，正常构建会更新对应包。
-单词包默认使用预先生成的四级词库，需要 Node.js 与 `sharp` 渲染入口图标；准备方法见模块说明。
-天气、书架和图库仍加入出厂文件系统镜像，单词包仅生成安装目录，不加入出厂镜像。
+主工程默认只构建平台。已有配套固件时，在仓库根目录执行
+`scons -C modules APPS=weather,books -j8` 可批量编译选中的应用并生成完整安装包，
+统一位于 `project/build_<board>/app-resources/<应用ID>/`。
+`APPS=all` 选择天气、书架、图库和单词四个正式应用；仅选择单词应用时需要另备词库、Node.js 与 `sharp`。
+应用源码或资源变化后，再次选择该应用构建即可更新安装包。
+平台和应用一起编译、可选出厂预装等用法见 [平台与应用构建](BUILDING.md)。
 
 `modules/hello/` 提供独立触摸应用：点击计数、打开子页面、返回后保留计数，
 退出应用后重新打开则重新初始化。控件同时支持触摸和平台全局按键，不包含硬件按键分发。
@@ -294,9 +296,9 @@ python ..\..\tools\package_app.py --manifest app.json --module output/hello.so -
 ```
 
 模块构建复用 SDK 的 `ua.BuildLibrary`，从固件的 `rtconfig.h`、`cconfig.h`
-和固件正常构建自动生成的 `project/rtua.py` 读取配置与头文件路径。生成文件不进入版本管理。
+和该固件构建目录内的 `rtua.py` 读取配置与头文件路径。平台构建自动生成这些文件，不进入版本管理。
 更换板级构建目录时使用 `scons FIRMWARE=build_<board> -j8`，
-并先为对应固件重新生成 `rtua.py`。
+并先完成对应平台构建。各板级目录分别保存自己的 `rtua.py`，不共用最后一次构建的头文件路径。
 
 产物为 `modules/hello/output/hello.so`，调试版本为同目录的 `hello.so.nostrip`。
 把 `output/package/hello` 整个目录放入 TF 卡的 `apps/hello/`。
@@ -324,7 +326,7 @@ Launcher 已接入独立图标文件；没有图标的示例使用默认图标�
 
 ### 完整天气参考应用
 
-`modules/weather` 将页面、设置、业务、持久化与常驻任务组合成一个包，固件构建自动生成配套包。
+`modules/weather` 将页面、设置、业务、持久化与常驻任务组合成一个包，通过 `APPS=weather` 显式构建配套包。
 它通过 `epd_service_publish_summary()` 发布平台持有的摘要副本，主页不保存模块函数指针；
 可选 `command` 回调由服务管理器保护调用寿命。页面关闭不停止后台，卸载等待后台和在途命令结束。
 完整源码职责和部署见 [天气模块说明](../modules/weather/README.md)。

@@ -9,14 +9,14 @@ import rtconfig
 repo = Path(Dir('#').abspath).parents[1]
 project = repo / 'project'
 firmware = project / ARGUMENTS.get('FIRMWARE', 'build_dpi-hdk_lb57gyd7n6_epd_hcpu')
-if not (firmware / 'rtconfig.h').is_file() or not (project / 'rtua.py').is_file():
-    print('Build the firmware and run scons --board=<board> --target=ua first.')
+if not (firmware / 'rtconfig.h').is_file() or not (firmware / 'rtua.py').is_file():
+    print('Build the platform first to generate firmware/rtua.py and configuration headers.')
     Exit(1)
 if not (firmware / 'epd_app_profile.h').is_file():
     print('Rebuild the firmware to generate its native app profile.')
     Exit(1)
 
-spec = importlib.util.spec_from_file_location('rtua', project / 'rtua.py')
+spec = importlib.util.spec_from_file_location('rtua', firmware / 'rtua.py')
 firmware_ua = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(firmware_ua)
 firmware_paths = firmware_ua.GetCPPPATH

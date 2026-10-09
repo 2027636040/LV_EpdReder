@@ -41,14 +41,15 @@ ONSTOP 删除定时器和焦点组。screen、子控件和页面内存由框架�
 
 ```powershell
 . .\SiFli-SDK\export.ps1
-Set-Location project
-scons --board=dpi-hdk_lb57gyd7n6_epd_hcpu -j8
+scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu -j8
+scons -C modules APPS=weather -j8
 ```
 
-固件构建自动生成模块编译配置，构建本目录并生成完整安装包。
+首次先编译平台；已有配套固件时，只执行第二条构建命令即可更新天气安装包，不重编平台。
 模块产物为 `modules/weather/output/weather.so`，安装目录为
 `project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/app-resources/weather`。
-打包后自动核对模块外部符号与主固件 RTM 导出表。
+打包前自动核对模块外部符号与主固件 RTM 导出表。
+批量构建和可选预装见 [平台与应用构建](../../docs/BUILDING.md)。
 
 将安装目录完整复制到 TF 卡 `apps/weather`，再从设置的应用安装入口安装“天气”。
 普通固件下载不覆盖内部文件系统，单独更新固件不会将旧资源包自动变为可执行应用。
