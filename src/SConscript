@@ -19,6 +19,7 @@ for d in list:
     if os.path.isfile(os.path.join(path, 'SConscript')):
         objs = objs + SConscript(os.path.join(d, 'SConscript'))
 
-objs = objs + SConscript(os.path.join(cwd, '../waveform/SConscript'))
+# 波形资源已随屏驱迁至 SDK（customer/peripherals/display/epd_e0470a03/waveform），
+# 头/库由该目录 SConscript 提供，bin 由 SConstruct 打进 wave_table 分区。
 
 Return('objs')

@@ -224,7 +224,7 @@ JPEG 按小块而非任意单行解码符合低内存目标；验收重点是工
 | TJpgDec 本地输出及缩放配置 | [tjpgdcnf.h](/D:/program/LV_EpdReder/SiFli-SDK/external/lvgl_v9/src/libs/tjpgd/tjpgdcnf.h:8) |
 | LVGL libpng 整图读取路径 | [lv_libpng.c](/D:/program/LV_EpdReder/SiFli-SDK/external/lvgl_v9/src/libs/libpng/lv_libpng.c:208) |
 | 图片分配及系统堆回退 | [app_mem.c](/D:/program/LV_EpdReder/SiFli-SDK/middleware/lvgl/app_mem.c:607) |
-| 当前 16 灰阶转换 | [epd_e0470a03.c](/D:/program/LV_EpdReder/src/boards/epd_e0470a03_57x/epd_e0470a03.c:363) |
+| 当前 16 灰阶转换 | [epd_e0470a03.c](/D:/program/LV_EpdReder/SiFli-SDK/customer/peripherals/display/epd_e0470a03/epd_e0470a03.c:363) |
 
 外部参考仅用于补充通用组件机制：
 

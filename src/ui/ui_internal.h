@@ -9,7 +9,7 @@
 #include "ui_app.h"
 #include "ui_navigation.h"
 #include "platform/app_image.h"
-#include "boards/epd_e0470a03_57x/epd_waveform.h"
+#include "epd_waveform.h"   /* 屏驱波形接口（SDK: customer/peripherals/display/epd_e0470a03）*/
 #include <stdio.h>
 #include <string.h>
 

@@ -412,7 +412,7 @@ TF 字体全量加载到 PSRAM 后会在关机时丢失，开机重新读入即�
 | 框架调度暂停 | [gui_app_fwk.c](/D:/program/LV_EpdReder/SiFli-SDK/middleware/app_fwk/gui_app_fwk.c:1196)、[app_schedule.c](/D:/program/LV_EpdReder/SiFli-SDK/middleware/app_fwk/app_schedule.c:2376) |
 | 主循环和输入 | [main.c](/D:/program/LV_EpdReder/src/main.c:93)、[ui_app.c](/D:/program/LV_EpdReder/src/ui/ui_app.c:17)、[buttons.c](/D:/program/LV_EpdReder/src/boards/controls/buttons.c:141) |
 | 页面与阅读任务 | [launcher.c](/D:/program/LV_EpdReder/src/ui/launcher.c:1061)：`page_lifecycle`、`launcher_process`；[ui_reader.c](/D:/program/LV_EpdReder/src/ui/ui_reader.c:329)：`ui_reader_process` |
-| EPD 电源及灰度缓存 | [epd_e0470a03.c](/D:/program/LV_EpdReder/src/boards/epd_e0470a03_57x/epd_e0470a03.c:484)、[epd_tps.c](/D:/program/LV_EpdReder/src/boards/epd_e0470a03_57x/epd_tps.c:189) |
+| EPD 电源及灰度缓存 | [epd_e0470a03.c](/D:/program/LV_EpdReder/SiFli-SDK/customer/peripherals/display/epd_e0470a03/epd_e0470a03.c:484)、[epd_tps.c](/D:/program/LV_EpdReder/SiFli-SDK/customer/peripherals/display/epd_e0470a03/epd_tps.c:189) |
 | LCD 与 SDIO 传输保护 | [drv_lcd.c](/D:/program/LV_EpdReder/SiFli-SDK/rtos/rtthread/bsp/sifli/drivers/drv_lcd.c:2067)、[drv_sdio.c](/D:/program/LV_EpdReder/SiFli-SDK/rtos/rtthread/bsp/sifli/drivers/drv_sdio.c:574) |
 | 57 唤醒引脚 | [bf0_hal_hpaon_sf32lb57x.c](/D:/program/LV_EpdReder/SiFli-SDK/drivers/hal/bf0_hal_hpaon_sf32lb57x.c:19)、[bf0_hal_aon_sf32lb57x.h](/D:/program/LV_EpdReder/SiFli-SDK/drivers/Include/bf0_hal_aon_sf32lb57x.h:26) |
 | 板级电源和 PSRAM | [bsp_power.c](/D:/program/LV_EpdReder/SiFli-SDK/customer/boards/sf32lb57-dpi-hdk_base/bsp_power.c:25)、[flash.c](/D:/program/LV_EpdReder/SiFli-SDK/customer/boards/common/flash.c:1202) |

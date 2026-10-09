@@ -15,29 +15,69 @@
 | 存储 | TF 卡（FAT32，书籍直接放根目录）+ 内置 fs_root |
 
 ## 依赖
-- SiFli-SDK 子模块，固定为 main 分支提交 `a25ebccdb986a98070287cf1701dc5adb10a265d`；通过环境变量 `SIFLI_SDK` 指向 SDK 目录
-- 屏幕驱动来源：OpenSiFli/EPD_Reader PR#39（E0470A03，含波形表）
+
+- SiFli-SDK 子模块，固定为 main 分支提交 `a25ebccdb986a98070287cf1701dc5adb10a265d`；通过环境变量 `SIFLI_SDK` 指向 SDK 目录。
+- 屏幕驱动与波形：工程需要 SDK 中的 `customer/peripherals/display/epd_e0470a03/` 专用驱动及其 `waveform/` 资源。`project/Kconfig.proj` 的板级选择项启用 SDK 的 `LCD_USING_EPD_E0470A03`。
+- SD 卡组件：由 `project/sf-pkg.yaml` 声明 `epd-sdcard` 组件及版本，构建时使用项目的组件包配置。
 
 ## 构建
+
+### 平台构建
+
+在仓库根目录执行：
+
 ```powershell
-# 在仓库根目录激活环境
 . .\SiFli-SDK\export.ps1
-
-# 编译平台和初始文件系统镜像，不构建动态应用
 scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu -j8
-
-# 可选：使用已有平台固件，单独或批量编译应用
-scons -C modules APPS=weather -j8
-scons -C modules APPS=books,gallery -j8
-# 所有正式应用，包括需要另备词库和 sharp 的单词应用
-# scons -C modules APPS=all -j8
 ```
 
+平台默认构建固件、配套启动镜像、公共资源、波形和 `fs_root.bin`，不构建动态应用。
+`fs_root.bin` 使用 SDK 自带的 `tools/mklfsimg/mklfsimg.exe` 打包 `disk/` 初始内容。
+固件产物和下载脚本位于 `project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/`。
+
+### 动态应用构建
+
+完成平台构建后，可以单独、批量或全部构建动态应用：
+
+```powershell
+scons -C modules APPS=weather -j8
+scons -C modules APPS=books,gallery -j8
+scons -C modules APPS=all -j8
+```
+
+`APPS` 支持 `weather`、`books`、`gallery`、`words`，多个应用 ID 用逗号分隔；`all` 选择全部正式应用。
+应用构建读取已有平台固件及其配置，不重新编译平台。
 动态应用安装包输出到 `project/build_<board>/app-resources/<应用ID>/`。
-平台构建不要求安装 Node.js、`sharp` 或准备单词词库。应用按需安装，允许设备不安装任何动态应用。
-编译选择、出厂预装和下载说明见 [平台与应用构建](docs/BUILDING.md)。
-平台构建使用 SDK 自带工具生成 `fs_root.bin`，不需要 Visual Studio；波形仍随平台下载。
-文件系统镜像只有显式使用 `STORAGE_IMAGE=1` 或 `STORAGE_IMPORT` 才加入下载清单。
+设备可以按需安装应用，也可以不安装任何动态应用。
+
+选择构建 `words` 时，需要 Node.js、`sharp`、词库 `.wdb` 及对应的 `.wdb.json` 报告，
+准备方法见 [单词应用](modules/words/README.md)。
+
+也可以在一次命令中构建平台和指定应用：
+
+```powershell
+scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu APPS=weather,books -j8
+```
+
+### 工厂预装与烧录
+
+通过 `PREINSTALL` 选择写入出厂文件系统的应用，通过 `STORAGE_IMAGE=1` 将文件系统镜像加入下载清单：
+
+```powershell
+scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu PREINSTALL=weather,books STORAGE_IMAGE=1 -j8
+```
+
+构建自动编译所选预装应用，将完整安装包写入 `fs_root.bin`。
+普通平台构建默认不预装应用，普通下载清单不包含文件系统镜像。
+烧录 `fs_root.bin` 会覆盖内部文件系统已有内容。
+
+在仓库根目录运行生成的下载脚本：
+
+```powershell
+project\build_dpi-hdk_lb57gyd7n6_epd_hcpu\uart_download.bat
+```
+
+固件选择、应用构建依赖、预装列表和存储迁移参数见 [平台与应用构建](docs/BUILDING.md)。
 
 ## 目录结构
 ```
@@ -56,7 +96,7 @@ scons -C modules APPS=books,gallery -j8
 │   │   ├── reader/reader.c|h      # 阅读引擎（按偏移取文本/进度）
 │   │   └── service_cmd.c          # msh 调试命令（svc，验证各接口返回）
 │   └── boards/
-│       ├── epd_e0470a03_57x/      # E0470A03 墨水屏驱动 + 波形逻辑 + TPS 电源
+│       ├── (EPD 屏驱+波形已迁至 SDK customer/peripherals/display/epd_e0470a03，见“依赖”)
 │       ├── touch/gt967/           # GT967 触摸驱动
 │       ├── battery/               # 电量计
 │       ├── controls/              # 按键（KEY1/2/3）
@@ -66,7 +106,6 @@ scons -C modules APPS=books,gallery -j8
 ├── assets/SConscript              # SDK EZIP 资源生成与编译
 ├── tools/generate_ui_icons.cjs    # SVG → 灰阶透明 PNG
 ├── font/                          # 内置中文字体（MiSans Normal，供 Tiny TTF）
-├── waveform/                      # 打库波形 bin + 读取库
 ├── disk/                          # 内置文件系统镜像内容
 └── RT-Thread + LVGL 墨水屏 Demo 软件需求.html
 ```

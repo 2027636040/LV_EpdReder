@@ -1,7 +1,7 @@
 #include "epd_refresh.h"
 #include "gui_app_int.h"
 #include "lvgl.h"
-#include "boards/epd_e0470a03_57x/epd_waveform.h"
+#include "epd_waveform.h"   /* 屏驱波形接口（SDK: customer/peripherals/display/epd_e0470a03）*/
 
 static lv_obj_t *foreground_screen;
 static lv_obj_t *submitted_screen;

@@ -86,9 +86,10 @@ if ARGUMENTS.get('STORAGE_IMPORT'):
     AddCustomImg('ble_store', bin=[os.path.join(os.path.abspath(ARGUMENTS['STORAGE_IMPORT']), 'ble.bin')])
 
 
-# Add EPD wave form image bin
+# Add EPD wave form image bin（波形随屏驱存放在 SDK 内）
 if GetDepend('EPD_WAVEFORM_USE_BIN'):
-    epd_wave_bin="../waveform/epd_waveform.bin"
+    epd_wave_bin=os.path.join(SIFLI_SDK,
+        "customer/peripherals/display/epd_e0470a03/waveform/epd_waveform.bin")
     AddCustomImg("wave_table",bin=[epd_wave_bin])
 
 # Generate download .bat script

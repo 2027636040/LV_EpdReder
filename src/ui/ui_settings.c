@@ -2,7 +2,7 @@
 #include "ui_settings_store.h"
 #include "bt_pan.h"
 #include "network.h"
-#include "boards/epd_e0470a03_57x/epd_waveform.h"
+#include "epd_waveform.h"   /* 屏驱波形接口（SDK: customer/peripherals/display/epd_e0470a03）*/
 #include <stddef.h>
 #include <stdint.h>
 
