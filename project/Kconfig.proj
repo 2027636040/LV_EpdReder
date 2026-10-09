@@ -112,10 +112,6 @@ if !BSP_USING_BUILT_LCD || EPD_USE_LVGL
 		bool
 		default n
 
-	config LCD_USING_EPD_E0470A03_EPD_57
-		bool
-		default n
-
 #define the touch controller name
 	config TSC_USING_FT5446U_V01
 		bool
@@ -168,7 +164,7 @@ if !BSP_USING_BUILT_LCD || EPD_USE_LVGL
 
 		config LCD_USING_EPD_E0470A03_V10_57
 			bool "4.7 rect electronic paper display(EPD E0470A03 1216x684) for SF32LB57 board"
-			select LCD_USING_EPD_E0470A03_EPD_57
+			select LCD_USING_EPD_E0470A03
 			select BSP_LCDC_USING_EPD_8BIT
 			select BSP_LCDC_USING_DIRECT_EPD
 	endchoice

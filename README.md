@@ -16,7 +16,7 @@
 
 ## 依赖
 - SiFli-SDK 子模块，固定为 main 分支提交 `a25ebccdb986a98070287cf1701dc5adb10a265d`；通过环境变量 `SIFLI_SDK` 指向 SDK 目录
-- 屏幕驱动来源：OpenSiFli/EPD_Reader PR#39（E0470A03，含波形表）
+- 屏幕驱动与波形：**全部在 SDK 内** `customer/peripherals/display/epd_e0470a03/`（E0470A03 专用驱动 + `waveform/` 波形 bin/头/库）；Kconfig 项 `LCD_USING_EPD_E0470A03` 定义于 `customer/peripherals/Kconfig`，由 `project/Kconfig.proj` 的板级选择项 `select`。SDK 原有的 `epd_opm060da`（6" 通用驱动）保持原样、不参与编译。工程侧不再保留任何屏驱/波形文件。
 
 ## 构建
 ```powershell
@@ -25,13 +25,12 @@
 
 # 2. 编译
 cd project
-scons --board=dpi-hdk_lb57gyd7n6_epd --board_search_path=.. -j8
+scons --board=dpi-hdk_lb57gyd7n6_epd -j11
 
 # 3. 烧录
 project\build_dpi-hdk_lb57gyd7n6_epd_hcpu\uart_download.bat
 ```
 
-> 构建时自动打包：`disk/` → fs_root 分区；`waveform/epd_waveform.bin` → wave_table 分区（256KB）。
 
 ## 目录结构
 ```
@@ -50,7 +49,7 @@ project\build_dpi-hdk_lb57gyd7n6_epd_hcpu\uart_download.bat
 │   │   ├── reader/reader.c|h      # 阅读引擎（按偏移取文本/进度）
 │   │   └── service_cmd.c          # msh 调试命令（svc，验证各接口返回）
 │   └── boards/
-│       ├── epd_e0470a03_57x/      # E0470A03 墨水屏驱动 + 波形逻辑 + TPS 电源
+│       ├── (EPD 屏驱+波形已迁至 SDK customer/peripherals/display/epd_e0470a03，见“依赖”)
 │       ├── touch/gt967/           # GT967 触摸驱动
 │       ├── battery/               # 电量计
 │       ├── controls/              # 按键（KEY1/2/3）
@@ -60,7 +59,6 @@ project\build_dpi-hdk_lb57gyd7n6_epd_hcpu\uart_download.bat
 ├── assets/SConscript              # SDK EZIP 资源生成与编译
 ├── tools/generate_ui_icons.cjs    # SVG → 灰阶透明 PNG
 ├── font/                          # 内置中文字体（MiSans Normal，供 Tiny TTF）
-├── waveform/                      # 打库波形 bin + 读取库
 ├── disk/                          # 内置文件系统镜像内容
 └── RT-Thread + LVGL 墨水屏 Demo 软件需求.html
 ```
