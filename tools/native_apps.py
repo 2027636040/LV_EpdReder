@@ -9,6 +9,7 @@ import shutil
 import tempfile
 from package_app import build_package
 from check_app_imports import verify
+from prebuilt_dictionary import unpack
 
 
 SYMBOLS = ('location', 'humidity', 'wind', 'visibility', 'cloud',
@@ -207,13 +208,31 @@ def add_words_package(env, sdk, repo, rgb565=True, palette=None, dictionary=None
 
     env.Command(str(icon), [str(module_dir / 'assets/icon.svg'), str(renderer)],
                 Action(render_icon, 'Render words icon'))
-    dictionary = Path(dictionary).resolve() if dictionary else module_dir / 'output/dictionaries/unified-full/library.wdb'
-    for source in (dictionary, dictionary.with_suffix('.wdb.json')):
+    archive = None
+    if dictionary:
+        dictionary = Path(dictionary).resolve()
+        report = dictionary.with_suffix('.wdb.json')
+        sources = (dictionary, report)
+    else:
+        archive = module_dir / 'assets/dictionary/library.wdb.gz'
+        report = module_dir / 'assets/dictionary/library.wdb.json'
+        dictionary = Path(env['build_dir']).resolve() / 'words-dictionary/library.wdb'
+        sources = (archive, report)
+    for source in sources:
         if not source.is_file():
             raise ValueError('words requires dictionary and report: ' + str(source) +
                              '; see modules/words/README.md or set WORDS_DICTIONARY=<file.wdb>')
+    if archive is not None:
+        def restore_dictionary(target, source, env):
+            unpack(str(source[0]), str(source[1]), str(target[0]))
+            return 0
+
+        restored = env.Command(str(dictionary), [str(archive), str(report),
+                                                str(Path(__file__).with_name('prebuilt_dictionary.py'))],
+                               Action(restore_dictionary, 'Restore words dictionary'))
+        env.Precious(restored)
     resources = {'library.wdb': dictionary,
-                 'library.wdb.json': dictionary.with_suffix('.wdb.json'),
+                 'library.wdb.json': report,
                  'LICENSE.ecdict': module_dir / 'LICENSE.ecdict',
                  'LICENSE.fsrs': module_dir / 'LICENSE.fsrs',
                  'SOURCES.txt': module_dir / 'SOURCES.txt'}

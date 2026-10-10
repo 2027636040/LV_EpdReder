@@ -71,7 +71,9 @@ TF 卡移除沿用平台的取消、停止服务和退出流程；模块检查�
 
 ## 电脑端生成
 
-生成器只依赖 Python 标准库。在本模块目录运行以下命令。输入由开发者提前从上述固定快照取得，正常构建不会下载或转换资源。
+完整预生成词库及报告已经纳入 Git：`assets/dictionary/library.wdb.gz` 和 `assets/dictionary/library.wdb.json`。正常构建只在电脑端解压并校验，不需要原始 CSV/JSON，不需要重新下载、关联或生成索引。压缩是无损的，安装包和设备仍使用未压缩的完整 WDB。
+
+以下生成流程仅在更新词库内容时使用。生成器只依赖 Python 标准库，在本模块目录运行。更新人员提前取得上述固定快照的原始输入。
 
 ECDICT 输入为 ecdict.csv，固定快照的 SHA256 为 `1a6947e04785db63613a92e14903cdae7954f7e84860b10e68e5c7cbb3f9c3cf`。kajweb 输入使用真实 JSON/JSON-lines，或仓库中包含 JSON 的 ZIP；同时提供同快照 bookLists.txt 分类目录。
 
@@ -94,6 +96,15 @@ python tools/build_dictionary.py output/source/ecdict.csv output/dictionaries/un
 
 工具不覆盖已有输出，更新时指定新生成目录。每次同时产生 `library.wdb` 和 `library.wdb.json`。实际使用其他来源快照时，传入 `--revision` 和 `--kajweb-revision`，不要沿用默认版本号。
 
+验证新词库后，将预生成内容压缩到受版本控制的资源目录，并同步报告：
+
+```powershell
+python ../../tools/prebuilt_dictionary.py pack output/dictionaries/unified-full/library.wdb output/dictionaries/unified-full/library.wdb.json assets/dictionary/library.wdb.gz
+Copy-Item output/dictionaries/unified-full/library.wdb.json assets/dictionary/library.wdb.json
+```
+
+压缩工具核对报告中的原始长度和 SHA256，使用固定 gzip 时间戳，保证相同输入生成相同压缩文件。资源压缩包和报告应在同一提交中更新。源码仓库中的压缩包约 40.95 MiB，解压后与完整 WDB 逐字节一致。
+
 `tools/scope_map.json` 明确映射 ECDICT tag 与 kajweb catalog tag，例如 ECDICT 的 ky 对应考研，kajweb 的 IELTS 对应雅思。映射根据实际目录建立，不靠文件名猜测；未知标签和异常条目进入报告。不同来源的范围成员取并集，不宣称各来源覆盖面或版本完全一致。
 
 `--include-scopes cet4,cet6` 是电脑端资源裁剪选项：保留这些范围的词条并集和这些范围的索引，不生成多个重复正文库；这不是设备上的多范围组合功能。不传该选项则保留全部有效词头，未属于范围的词仍可离线查词。`--legacy` 只用于生成 WDB1 迁移测试数据。
@@ -110,7 +121,7 @@ python tools/build_dictionary.py output/source/ecdict.csv output/dictionaries/un
 
 平台与动态应用独立构建。已有兼容固件时只需更新单词应用。本次未新增宿主导出，不需要为词库改造修改 SDK、屏幕驱动或分区。
 
-只有显式构建单词应用时才需要 Node.js、sharp 和预生成词库。入口图标使用 `assets/icon.svg`；在本模块目录执行 `npm install --no-save --package-lock=false sharp`，或让 NODE_PATH 指向已有安装。
+只有显式构建单词应用时才需要 Node.js、sharp 和随仓库提供的预生成词库。入口图标使用 `assets/icon.svg`；在本模块目录执行 `npm install --no-save --package-lock=false sharp`，或让 NODE_PATH 指向已有安装。
 
 在仓库根目录执行：
 
@@ -120,7 +131,7 @@ scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu -j8
 scons -C modules APPS=words -j8
 ```
 
-默认读取 `modules/words/output/dictionaries/unified-full/library.wdb` 及旁边的报告，直接打入安装包。不在每次编译时重新生成。使用另一个预生成产物：
+默认读取 Git 中的 `modules/words/assets/dictionary/library.wdb.gz` 及旁边的报告，自动解压到所选固件构建目录的 `words-dictionary/library.wdb`，核对原始长度和 SHA256 后打入安装包。资源没有变化时，增量构建不重复解压；解压失败不替换已有有效词库。不使用开发者本地 `output/source/` 或旧的生成目录作为默认输入。使用另一个未压缩的预生成产物：
 
 ```powershell
 scons -C modules APPS=words WORDS_DICTIONARY=<词库绝对路径.wdb> -j8
@@ -167,7 +178,7 @@ TF 安装目录 `.epd/apps/words` 与安装包来源目录分开，数据与缓�
 cl /nologo /std:c11 /utf-8 /O2 /MT /LD /W4 /D_CRT_SECURE_NO_WARNINGS core\words_fsrs.c core\words_dictionary.c core\words_content.c /Fo:output\ /Fe:output\words_core.dll /link /EXPORT:words_fsrs_review /EXPORT:words_dictionary_open /EXPORT:words_dictionary_search /EXPORT:words_dictionary_entry /EXPORT:words_dictionary_entry_size /EXPORT:words_dictionary_read_entry /EXPORT:words_entry_parse /EXPORT:words_entry_text /EXPORT:words_dictionary_scope /EXPORT:words_dictionary_member /EXPORT:words_dictionary_find /EXPORT:words_dictionary_word /EXPORT:words_dictionary_unchanged
 cl /nologo /std:c11 /utf-8 /O2 /MT /LD /W4 /D_CRT_SECURE_NO_WARNINGS /Itests\shim /Icore tests\service_harness.c words_result.c words_store.c core\words_learning.c core\words_fsrs.c core\words_dictionary.c core\words_content.c /Fo:output\ /Fe:output\words_learning.dll
 python tests/test_core.py --library output/words_core.dll --reference <上述固定版本Py-FSRS目录>
-python tests/test_unified.py --library output/words_core.dll --dictionary output/dictionaries/unified-full/library.wdb
+python tests/test_unified.py --library output/words_core.dll --dictionary ../../project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/words-dictionary/library.wdb
 python tests/test_learning.py --library output/words_learning.dll
 ```
 

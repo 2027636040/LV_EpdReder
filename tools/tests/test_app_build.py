@@ -1,5 +1,8 @@
 """Application selection and one-way firmware/package build dependencies."""
 from pathlib import Path
+import gzip
+import hashlib
+import json
 import sys
 import tempfile
 import types
@@ -101,11 +104,13 @@ class AppBuildTests(unittest.TestCase):
 
     def test_words_packages_prebuilt_unified_dictionary_and_provenance(self):
         module = self.root / 'modules/words'
-        dictionary = module / 'output/dictionaries/unified-full/library.wdb'
-        dictionary.parent.mkdir(parents=True)
-        dictionary.touch()
-        report = dictionary.with_suffix('.wdb.json')
-        report.touch()
+        archive = module / 'assets/dictionary/library.wdb.gz'
+        archive.parent.mkdir(parents=True)
+        content = b'pre-generated dictionary fixture'
+        archive.write_bytes(gzip.compress(content, mtime=0))
+        report = archive.with_suffix('.json')
+        report.write_text(json.dumps({'bytes': len(content), 'sha256': hashlib.sha256(content).hexdigest()}))
+        dictionary = Path(self.env['build_dir']) / 'words-dictionary/library.wdb'
         with patch.object(native_apps, 'add_package', return_value='words package') as package:
             self.assertEqual(native_apps.add_words_package(self.env, self.root, self.root), 'words package')
             resources = package.call_args.args[-1]
@@ -114,7 +119,27 @@ class AppBuildTests(unittest.TestCase):
             self.assertEqual(resources['SOURCES.txt'], module / 'SOURCES.txt')
             self.assertIn('LICENSE.ecdict', resources)
             self.assertIn('LICENSE.fsrs', resources)
-        # Only the independent icon action is added; dictionary conversion is not a build action.
+        # Restore the pre-generated WDB; no source CSV/JSON conversion or download action.
+        self.assertEqual(len(self.env.commands), 2)
+        targets, sources, action = self.env.commands[1]
+        self.assertEqual(targets, [str(dictionary)])
+        self.assertEqual(sources[:2], [str(archive), str(report)])
+        self.assertTrue(sources[2].endswith('prebuilt_dictionary.py'))
+        self.assertFalse(dictionary.exists())
+        self.assertEqual(action(targets, sources, self.env), 0)
+        self.assertEqual(dictionary.read_bytes(), content)
+
+    def test_words_custom_dictionary_does_not_need_repository_archive(self):
+        dictionary = self.root / 'custom.wdb'
+        dictionary.touch()
+        report = dictionary.with_suffix('.wdb.json')
+        report.touch()
+        with patch.object(native_apps, 'add_package', return_value='custom package') as package:
+            self.assertEqual(native_apps.add_words_package(self.env, self.root, self.root,
+                                                          dictionary=dictionary), 'custom package')
+            resources = package.call_args.args[-1]
+            self.assertEqual(resources['library.wdb'], dictionary)
+            self.assertEqual(resources['library.wdb.json'], report)
         self.assertEqual(len(self.env.commands), 1)
 
     def test_filesystem_depends_only_on_selected_packages(self):

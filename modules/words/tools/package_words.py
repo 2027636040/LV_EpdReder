@@ -11,12 +11,13 @@ REPO = MODULE.parents[1]
 sys.path.insert(0, str(REPO / 'tools'))
 from package_app import build_package
 from check_app_imports import verify
+from prebuilt_dictionary import unpack
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--firmware', type=Path, default=REPO / 'project/build_dpi-hdk_lb57gyd7n6_epd_hcpu')
-    parser.add_argument('--dictionary', type=Path, default=MODULE / 'output/dictionaries/unified-full/library.wdb')
+    parser.add_argument('--dictionary', type=Path, help='Override the repository dictionary with a WDB and adjacent report')
     parser.add_argument('--icon', type=Path)
     parser.add_argument('--output', type=Path, help='New archive directory; defaults to firmware/app-resources/words')
     args = parser.parse_args()
@@ -29,13 +30,18 @@ if __name__ == '__main__':
             resources.mkdir()
             for name in ('LICENSE.fsrs', 'LICENSE.ecdict', 'SOURCES.txt'):
                 shutil.copyfile(MODULE / name, resources / name)
-            shutil.copyfile(args.dictionary, resources / 'library.wdb')
-            shutil.copyfile(args.dictionary.with_suffix('.wdb.json'), resources / 'library.wdb.json')
+            if args.dictionary:
+                report = args.dictionary.with_suffix('.wdb.json')
+                shutil.copyfile(args.dictionary, resources / 'library.wdb')
+            else:
+                report = MODULE / 'assets/dictionary/library.wdb.json'
+                unpack(MODULE / 'assets/dictionary/library.wdb.gz', report, resources / 'library.wdb')
+            shutil.copyfile(report, resources / 'library.wdb.json')
             staged = Path(temporary) / 'package'
             result = build_package(MODULE / 'app.json', MODULE / 'output/words.so',
                                    args.firmware / 'app-profile.json', staged, resources, icon)
             shutil.copytree(staged, destination, dirs_exist_ok=args.output is None)
             result['package'] = str(destination.resolve())
         print(json.dumps(result, indent=2, ensure_ascii=False))
-    except (OSError, ValueError) as error:
+    except (OSError, EOFError, ValueError) as error:
         parser.exit(1, f'Package failed: {error}\n')
