@@ -1,5 +1,11 @@
 # SF32LB57 墨水屏阅读器 PM 接入技术储备
 
+## 当前实现与储备入口
+
+系统 PM、关机事务及 LowBat/Charge 闭环仍待实施；现有面板断电不能代表整机休眠。当前接入状态见 [PM 接入现状](reserves/PM_INTEGRATION.md)，其他储备见[技术储备索引](TECHNICAL_RESERVES.md)。本文继续保留 SDK 机制、产品状态和硬件验证设计。
+
+天气后台已经按网络事件和业务期限等待，书架已经支持 TXT 与结构化文档并返回位置保存结果，设置和天气均已使用文件系统记录。下文 PM 的拟定状态转换不表示这些业务已经接入系统休眠。板级唤醒和供电分析主要针对 DPI 板；LCD 载板需要依据自身引脚和电路核对。
+
 ## 1. 结论与适用范围
 
 本项目采用两种明确分开的产品行为：锁屏保留运行状态，追求快速恢复；关机停止业务运行，不依赖 RAM/PSRAM 数据保留，下次开机重新初始化并加载持久化数据。产品状态名 `DeepSleep` 对应后一种关机行为，本文同时用 `OFF` 标识。
@@ -12,7 +18,7 @@
 
 目前系统 PM 尚未启用。已有面板断电、输入合并、差异刷新和缓存写回机制是接入基础。墨水屏波形、扫描时序和供电时序不属于本方案的调整对象。
 
-研究对象为 SF32LB57GYD7N6、E0470A03、LVGL V9，板级目标为 `dpi-hdk_lb57gyd7n6_epd_hcpu`。SDK 固定提交为 `a25ebccdb986a98070287cf1701dc5adb10a265d`。项目基线为提交 `39578298327c6cc222284b8fb006ff2f4ee5aa43` 加当前工作区中的 app_fwk、输入和显示等修改，因此仅检出该提交并不能重现本文描述的全部行为。SDK 工作区另外保留缓存比较类型和 TLS 证书修改。
+研究对象为 SF32LB57GYD7N6、E0470A03、LVGL V9，板级目标为 `dpi-hdk_lb57gyd7n6_epd_hcpu`。SDK 机制研究基线为 `a25ebccdb986a98070287cf1701dc5adb10a265d`；实际接入依据仓库当前 SDK、项目源码及生成配置重新核对。应用和存储已独立演进，当前行为以各[应用设计](TECHNICAL_RESERVES.md#当前动态应用)为准。
 
 本文的“已确认”指源码和现有构建配置能够直接证明的行为；“建议”是后续接入方案；“待验证”需要启用 PM 后编译、上板或测量。现有构建未启用 PM，不能作为 PM 配置的编译或运行验证，也没有可用于承诺续航的电流测量结果。
 
@@ -196,7 +202,7 @@ SDK LCD 任务已经在处理消息期间调用 PM request/release 和硬件忙�
 
 ### 4.5 SDIO 与现有板级休眠接口
 
-当前 TF 卡走 SDIO。`board_sleep_filesystem()` 等现有代码只在 SPI MSD 配置下控制卡电源，不能覆盖本板。SDK SDIO 传输保护可以复用，但它不等于卡电源管理。
+当前 TF 卡走 SDIO，介质生命周期由[独立 SD 卡组件](../components/sdcard/README.md)和平台存储服务管理。旧板级 SPI MSD 休眠钩子不能作为当前 SDIO 关机协议；SDK SDIO 传输保护可以复用，但它不等于卡电源管理。
 
 锁屏阶段优先保持卡供电，验证传输结束后 HCPU 可以休眠。OFF 则在文件写入完成、打开的文件和传输收尾后关闭可控的卡电源，下次启动重新初始化和挂载。实际电源开关是否存在需要板级确认；SDK 的 SDIO suspend 不等于 TF 已经断电。
 
@@ -204,7 +210,7 @@ SDK LCD 任务已经在处理消息期间调用 PM request/release 和硬件忙�
 
 | 当前工作 | 已确认的执行方式 | 建议 |
 |---|---|---|
-| 天气后台 | 每秒等待超时后检查网络；固定 30 分钟同步；失败后受控 5 秒重试 | 网络变化事件加最近到期时间等待，保留原周期和重试语义 |
+| 天气后台 | 已按网络事件和最近业务期限等待；固定 30 分钟同步；失败后受控 5 秒重试 | 复用当前机制，接入 PM 时保留周期、重连和取消语义 |
 | 天气 UI | 前台每 250 ms 检查快照/操作结果 | 数据版本或请求完成通知 UI，休眠时只保存最新状态 |
 | 状态栏 | 每秒检查日期时间、电量和无线状态；时间显示到分钟 | 时间按分钟边界处理，其他状态按事件或各自采样周期处理 |
 | NTP | 本次连接同步成功或尝试结束后阻塞，连接变化时唤醒 | 保留，不重复改造成轮询任务 |
@@ -311,7 +317,7 @@ Deep Sleep 的 57 路径会执行 `BSP_IO_Power_Down(CORE_ID_HCPU, false)` 和 `
 
 | 数据或资源 | 锁屏 | OFF 与下次开机 |
 |---|---|---|
-| 阅读位置 | 保留当前会话，沿用现有字节偏移保存 | 保存书籍标识和源文件字节位置；重新打开文件后按实际字体和排版定位，页码不是唯一锚点 |
+| 阅读位置 | 保留当前会话，沿用应用的位置保存 | TXT 保存书籍标识和源字节位置；重排文档保存转换版本、记录位置及记录内偏移，重新排版后恢复原内容，页码不是唯一锚点 |
 | 分页索引 | 后台可继续计算，结果不推动锁屏重绘 | 复用现有完整索引缓存；文件或排版条件变化则重新分页，不强行保存未完成索引为完整结果 |
 | 书架选择、原页面 | 由页面上下文和现有保存变量恢复 | 如需跨关机恢复，保存稳定的书籍/页面标识和必要位置；不序列化 app_fwk 栈内存或控件指针 |
 | 设置与天气 | 保留内存并按原规则持久化 | 复用 `ui_settings_store`、`weather_store`，加载最近一次有效记录 |
@@ -320,9 +326,9 @@ Deep Sleep 的 57 路径会执行 `BSP_IO_Power_Down(CORE_ID_HCPU, false)` 和 `
 | LVGL/app_fwk/RTOS/网络 | 保留运行现场 | 从初始化流程重建；不恢复指针、句柄、锁、TCP/TLS 会话或 DMA 状态 |
 | 墨水屏新旧灰度历史 | 保留，用于现有局刷策略 | RAM 历史作废；首次真正显示正常界面走全刷，建立新的可信历史后再局刷 |
 
-现有设置存储采用两个 Flash 扇区轮换，天气存储采用多槽轮换；两者都有校验、版本、序号和最后提交标记。阅读位置也已有轮换文件及 `fsync()`。后续复用这些实现，不为关机再引入一套通用快照文件系统。
+现有设置保存在 `/flash/system/settings.bin`，天气配置和缓存保存在应用安装卷；它们通过带版本及 CRC 的记录和文件替换接口提交。阅读位置使用 `.a`、`.b` 轮换文件和写入同步。后续复用这些实现，不为关机再引入一套通用快照文件系统。
 
-`ui_reader_save()` 当前返回 void，关机协调不能仅凭调用完成就认为保存成功；应把原有位置存储的成功状态纳入关机完成判断。分页 `.idx` 是可重建缓存，保存失败不应与丢失最新阅读位置同等处理。未来新增跨关机页面恢复记录时，同样需要版本、有效性检查及完整写入后提交。
+`ui_reader_save()` 当前返回 bool，书架通过 `books_flush()` 接入服务保存回调；关机协调需要消费该结果并确认相关写回完成。分页 `.idx` 是可重建缓存，保存失败不应与丢失最新阅读位置同等处理。未来新增跨关机页面恢复记录时，同样需要版本、有效性检查及完整写入后提交。
 
 TF 字体全量加载到 PSRAM 后会在关机时丢失，开机重新读入即可；若字体已有有效的 NOR 副本，复用该副本。无需在每次关机时把字体和整块 PSRAM 再复制到 Flash。
 
@@ -331,7 +337,7 @@ TF 字体全量加载到 PSRAM 后会在关机时丢失，开机重新读入即�
 1. 完成 SDK 必需的板级初始化后，尽早读取 SDK 保存的启动类型和唤醒源，并采集有效电池/充电状态。正常 PAN、天气、扫描和完整 UI 启动放在开机条件通过之后；核查自动初始化项，避免它们先行启动业务。
 2. 充电原因唤醒只执行关机充电管理，不能调用默认开机策略进入正常页面。LowBat 条件未解除时不接受按键开机；阈值满足也只开放手动开机条件。
 3. 合法手动开机时初始化存储，载入已提交设置、阅读记录和天气缓存；初始化 LVGL 及字体组件后加载所需字体，再由 app_fwk 创建页面对象。缺少 TF 或文件时回退到可用页面，不等待不存在的资源。
-4. 如需恢复阅读，先建立实际字体和布局，再根据源文件字节位置定位；只在布局和文件检查通过时复用分页索引。恢复对象来自本次新建，不来自关机前内存。
+4. 如需恢复阅读，先建立实际字体和布局；TXT 根据源文件字节位置定位，重排文档根据记录位置及记录内偏移定位。只在布局和内容身份检查通过时复用分页索引。恢复对象由启动流程新建，不来自关机前内存。
 5. 通过现有显示驱动全刷首个正常界面，建立灰度历史；随后按既有规则重连 PAN，网络就绪后同步时间和天气。RTC 无有效时间时沿用未知时间显示，不能从旧 RT-Thread tick 推算关机时长。
 6. 结束开机按键的消费，再开放正常输入队列，避免开机动作同时触发翻页或页面确认。
 
@@ -400,34 +406,34 @@ TF 字体全量加载到 PSRAM 后会在关机时丢失，开机重新读入即�
 
 | 内容 | 位置与主要符号 |
 |---|---|
-| 实际构建配置 | [rtconfig.h](/D:/program/LV_EpdReder/project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/rtconfig.h)、[.config](/D:/program/LV_EpdReder/project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/.config:112) |
-| PM Kconfig | [middleware/system/Kconfig](/D:/program/LV_EpdReder/SiFli-SDK/middleware/system/Kconfig:1)、[drivers/Kconfig](/D:/program/LV_EpdReder/SiFli-SDK/rtos/rtthread/components/drivers/Kconfig:138) |
-| PM 策略与底层流程 | [bf0_pm.c](/D:/program/LV_EpdReder/SiFli-SDK/middleware/system/bf0_pm.c:305)：`pm_policy`、`sifli_deep_handler`、`sifli_timer_start`、`low_power_init`、`pm_scenario_start/stop` |
-| DEEP 保留式恢复 | [sifli_deep_handler](/D:/program/LV_EpdReder/SiFli-SDK/middleware/system/bf0_pm.c:1022)：SF32LB57 从 WFI 后继续执行，恢复时钟和板级状态 |
-| RT-Thread 调度与计数 | [pm.c](/D:/program/LV_EpdReder/SiFli-SDK/rtos/rtthread/components/drivers/pm/pm.c:411)：`_pm_enter_sleep`、`rt_pm_request/release`、`rt_pm_run_enter` |
-| 空闲等待 | [idle.c](/D:/program/LV_EpdReder/SiFli-SDK/rtos/rtthread/src/idle.c:225)、[context_gcc.S](/D:/program/LV_EpdReder/SiFli-SDK/rtos/rtthread/libcpu/arm/cortex-m33/context_gcc.S:244) |
-| GUI 电源组件 | [gui_app_pm.c](/D:/program/LV_EpdReder/SiFli-SDK/middleware/system/gui_app_pm.c:302)：`gui_suspend`、`gui_pm_fsm`、`gui_set_idle_mode`、`pm_shutdown` |
-| V9 GUI PM 例程 | [gui_pm/src/main.c](/D:/program/LV_EpdReder/SiFli-SDK/example/pm/gui_pm/src/main.c:131)、[proj.conf](/D:/program/LV_EpdReder/SiFli-SDK/example/pm/gui_pm/project/proj.conf)：配置启用 V9；例程验证板为 52 系列，不作为 57 板硬件验证结果 |
-| 带 57 分支的蓝牙 PM 例程 | [bt/src/hcpu/main.c](/D:/program/LV_EpdReder/SiFli-SDK/example/pm/bt/src/hcpu/main.c)：`app_wakeup`；[57 配置](/D:/program/LV_EpdReder/SiFli-SDK/example/pm/bt/project/hcpu/sf32lb57x/proj.conf) 关闭 MPI1/2，不能照搬到依赖 PSRAM 的项目 |
-| 框架调度暂停 | [gui_app_fwk.c](/D:/program/LV_EpdReder/SiFli-SDK/middleware/app_fwk/gui_app_fwk.c:1196)、[app_schedule.c](/D:/program/LV_EpdReder/SiFli-SDK/middleware/app_fwk/app_schedule.c:2376) |
-| 主循环和输入 | [main.c](/D:/program/LV_EpdReder/src/main.c:93)、[ui_app.c](/D:/program/LV_EpdReder/src/ui/ui_app.c:17)、[buttons.c](/D:/program/LV_EpdReder/src/boards/controls/buttons.c:141) |
-| 页面与阅读任务 | [launcher.c](/D:/program/LV_EpdReder/src/ui/launcher.c:1061)：`page_lifecycle`、`launcher_process`；[ui_reader.c](/D:/program/LV_EpdReder/src/ui/ui_reader.c:329)：`ui_reader_process` |
-| EPD 电源及灰度缓存 | [epd_e0470a03.c](/D:/program/LV_EpdReder/SiFli-SDK/customer/peripherals/display/epd_e0470a03/epd_e0470a03.c:484)、[epd_tps.c](/D:/program/LV_EpdReder/SiFli-SDK/customer/peripherals/display/epd_e0470a03/epd_tps.c:189) |
-| LCD 与 SDIO 传输保护 | [drv_lcd.c](/D:/program/LV_EpdReder/SiFli-SDK/rtos/rtthread/bsp/sifli/drivers/drv_lcd.c:2067)、[drv_sdio.c](/D:/program/LV_EpdReder/SiFli-SDK/rtos/rtthread/bsp/sifli/drivers/drv_sdio.c:574) |
-| 57 唤醒引脚 | [bf0_hal_hpaon_sf32lb57x.c](/D:/program/LV_EpdReder/SiFli-SDK/drivers/hal/bf0_hal_hpaon_sf32lb57x.c:19)、[bf0_hal_aon_sf32lb57x.h](/D:/program/LV_EpdReder/SiFli-SDK/drivers/Include/bf0_hal_aon_sf32lb57x.h:26) |
-| 板级电源和 PSRAM | [bsp_power.c](/D:/program/LV_EpdReder/SiFli-SDK/customer/boards/sf32lb57-dpi-hdk_base/bsp_power.c:25)、[flash.c](/D:/program/LV_EpdReder/SiFli-SDK/customer/boards/common/flash.c:1202) |
-| 项目板级接口 | [board_service.c](/D:/program/LV_EpdReder/src/boards/board_service.c:172)：`board_sleep_filesystem`、`board_prepare_to_sleep` |
-| 后台服务 | [weather.c](/D:/program/LV_EpdReder/src/services/weather/weather.c)、[network_time.c](/D:/program/LV_EpdReder/src/services/net/network_time.c)、[bt_pan.c](/D:/program/LV_EpdReder/src/services/net/bt_pan.c) |
-| 蓝牙核休眠控制 | [bf0_bt_common.c](/D:/program/LV_EpdReder/SiFli-SDK/middleware/bluetooth/service/common/bf0_bt_common.c:741)：`bt_sleep_control` |
-| 长超时分段 | [hwtimer.c](/D:/program/LV_EpdReder/SiFli-SDK/rtos/rtthread/components/drivers/hwtimer/hwtimer.c:14)：`timeout_calc`、`rt_hwtimer_write` |
-| Hibernate 与 Shutdown 差异 | [bf0_hal_pmu.c](/D:/program/LV_EpdReder/SiFli-SDK/drivers/hal/bf0_hal_pmu.c:209)：`HAL_PMU_EnterHibernate`、`HAL_PMU_EnterShutdown`、`HAL_PMU_CheckBootMode` |
-| 启动类型与唤醒现场 | [bf0_pm.c](/D:/program/LV_EpdReder/SiFli-SDK/middleware/system/bf0_pm.c:612)：`rt_application_init_power_on_mode`；[启动原因查询](/D:/program/LV_EpdReder/SiFli-SDK/middleware/system/bf0_pm.c:910)：`pm_get_pwron_wakeup_src` |
-| 默认开机策略 | [gui_app_pm.c](/D:/program/LV_EpdReder/SiFli-SDK/middleware/system/gui_app_pm.c:464)：RTC/充电分支、30 秒等待和 `sys_poweron_fsm` |
-| 57 PMU 引脚接口实现 | [bf0_hal_pmu_sf32lb57x.c](/D:/program/LV_EpdReder/SiFli-SDK/drivers/hal/bf0_hal_pmu_sf32lb57x.c:176)：编号接口有效，`EnablePinWakeup2` 返回错误；[HCPU 包装接口](/D:/program/LV_EpdReder/SiFli-SDK/middleware/system/bf0_pm.c:2707) |
-| 充电唤醒能力定义 | [bf0_hal_pmu.h](/D:/program/LV_EpdReder/SiFli-SDK/drivers/Include/bf0_hal_pmu.h:644)、[57 PMUC 寄存器](/D:/program/LV_EpdReder/SiFli-SDK/drivers/cmsis/sf32lb57x/pmuc.h:134) |
-| GUI PM 触摸电源行为 | [gui_app_pm.c](/D:/program/LV_EpdReder/SiFli-SDK/middleware/system/gui_app_pm.c:137)：`close_display`、`open_display` |
-| 锁屏仍更新状态栏的位置 | [launcher.c](/D:/program/LV_EpdReder/src/ui/launcher.c:306)：`launcher_set_status`；[锁屏页创建](/D:/program/LV_EpdReder/src/ui/launcher.c:984)；[状态轮询](/D:/program/LV_EpdReder/src/ui/ui_app.c:110) |
-| 电池检测占位分支 | [battery.c](/D:/program/LV_EpdReder/src/boards/battery/battery.c:105)：SF32LB57 返回固定值，不能作为 LowBat 的依据 |
-| 业务数据持久化 | [ui_settings_store.c](/D:/program/LV_EpdReder/src/ui/ui_settings_store.c:63)、[weather_store.c](/D:/program/LV_EpdReder/src/services/weather/weather_store.c:62)、[ui_bookshelf_data.c](/D:/program/LV_EpdReder/src/ui/ui_bookshelf_data.c:113) |
-| 阅读索引与位置 | [ui_reader.c](/D:/program/LV_EpdReder/src/ui/ui_reader.c:147)：`index_save`、`position_save`；[保存入口](/D:/program/LV_EpdReder/src/ui/ui_reader.c:373)：`ui_reader_save` |
-| 末端代码的链接放置 | [link.lds](/D:/program/LV_EpdReder/project/dpi-hdk_lb57gyd7n6_epd_hcpu/link.lds:143)：内部 RAM 的 `.retm_data` 规则；最终启用配置后以 map 核查调用链 |
+| 构建配置入口 | [proj.conf](../project/proj.conf)、[构建说明](BUILDING.md)；最终结果在对应构建目录的 `rtconfig.h` 和 `.config` 中核对 |
+| PM Kconfig | [middleware/system/Kconfig](../SiFli-SDK/middleware/system/Kconfig)、[drivers/Kconfig](../SiFli-SDK/rtos/rtthread/components/drivers/Kconfig) |
+| PM 策略与底层流程 | [bf0_pm.c](../SiFli-SDK/middleware/system/bf0_pm.c)：`pm_policy`、`sifli_deep_handler`、`sifli_timer_start`、`low_power_init`、`pm_scenario_start/stop` |
+| DEEP 保留式恢复 | [sifli_deep_handler](../SiFli-SDK/middleware/system/bf0_pm.c)：SF32LB57 从 WFI 后继续执行，恢复时钟和板级状态 |
+| RT-Thread 调度与计数 | [pm.c](../SiFli-SDK/rtos/rtthread/components/drivers/pm/pm.c)：`_pm_enter_sleep`、`rt_pm_request/release`、`rt_pm_run_enter` |
+| 空闲等待 | [idle.c](../SiFli-SDK/rtos/rtthread/src/idle.c)、[context_gcc.S](../SiFli-SDK/rtos/rtthread/libcpu/arm/cortex-m33/context_gcc.S) |
+| GUI 电源组件 | [gui_app_pm.c](../SiFli-SDK/middleware/system/gui_app_pm.c)：`gui_suspend`、`gui_pm_fsm`、`gui_set_idle_mode`、`pm_shutdown` |
+| V9 GUI PM 例程 | [gui_pm/src/main.c](../SiFli-SDK/example/pm/gui_pm/src/main.c)、[proj.conf](../SiFli-SDK/example/pm/gui_pm/project/proj.conf)：配置启用 V9；例程验证板为 52 系列，不作为 57 板硬件验证结果 |
+| 带 57 分支的蓝牙 PM 例程 | [bt/src/hcpu/main.c](../SiFli-SDK/example/pm/bt/src/hcpu/main.c)：`app_wakeup`；[57 配置](../SiFli-SDK/example/pm/bt/project/hcpu/sf32lb57x/proj.conf) 关闭 MPI1/2，不能照搬到依赖 PSRAM 的项目 |
+| 框架调度暂停 | [gui_app_fwk.c](../SiFli-SDK/middleware/app_fwk/gui_app_fwk.c)、[app_schedule.c](../SiFli-SDK/middleware/app_fwk/app_schedule.c) |
+| 主循环和输入 | [main.c](../src/main.c)、[ui_app.c](../src/ui/ui_app.c)、[buttons.c](../src/boards/controls/buttons.c) |
+| 页面与阅读任务 | [launcher.c](../src/ui/launcher.c)：`page_lifecycle`、`launcher_process`；[ui_reader.c](../modules/books/ui_reader.c)：`ui_reader_process` |
+| EPD 电源及灰度缓存 | [epd_e0470a03.c](../SiFli-SDK/customer/peripherals/display/epd_e0470a03/epd_e0470a03.c)、[epd_tps.c](../SiFli-SDK/customer/peripherals/display/epd_e0470a03/epd_tps.c) |
+| LCD 与 SDIO 传输保护 | [drv_lcd.c](../SiFli-SDK/rtos/rtthread/bsp/sifli/drivers/drv_lcd.c)、[drv_sdio.c](../SiFli-SDK/rtos/rtthread/bsp/sifli/drivers/drv_sdio.c) |
+| 57 唤醒引脚 | [bf0_hal_hpaon_sf32lb57x.c](../SiFli-SDK/drivers/hal/bf0_hal_hpaon_sf32lb57x.c)、[bf0_hal_aon_sf32lb57x.h](../SiFli-SDK/drivers/Include/bf0_hal_aon_sf32lb57x.h) |
+| 板级电源和 PSRAM | [bsp_power.c](../SiFli-SDK/customer/boards/sf32lb57-dpi-hdk_base/bsp_power.c)、[flash.c](../SiFli-SDK/customer/boards/common/flash.c) |
+| 当前板级与存储入口 | [board_service.c](../src/boards/board_service.c)、[storage.c](../src/services/storage.c)、[SD 卡组件](../components/sdcard/README.md)；系统 PM 收尾仍需接入 |
+| 后台服务 | [weather.c](../modules/weather/weather.c)、[network_time.c](../src/services/net/network_time.c)、[bt_pan.c](../src/services/net/bt_pan.c) |
+| 蓝牙核休眠控制 | [bf0_bt_common.c](../SiFli-SDK/middleware/bluetooth/service/common/bf0_bt_common.c)：`bt_sleep_control` |
+| 长超时分段 | [hwtimer.c](../SiFli-SDK/rtos/rtthread/components/drivers/hwtimer/hwtimer.c)：`timeout_calc`、`rt_hwtimer_write` |
+| Hibernate 与 Shutdown 差异 | [bf0_hal_pmu.c](../SiFli-SDK/drivers/hal/bf0_hal_pmu.c)：`HAL_PMU_EnterHibernate`、`HAL_PMU_EnterShutdown`、`HAL_PMU_CheckBootMode` |
+| 启动类型与唤醒现场 | [bf0_pm.c](../SiFli-SDK/middleware/system/bf0_pm.c)：`rt_application_init_power_on_mode`；[启动原因查询](../SiFli-SDK/middleware/system/bf0_pm.c)：`pm_get_pwron_wakeup_src` |
+| 默认开机策略 | [gui_app_pm.c](../SiFli-SDK/middleware/system/gui_app_pm.c)：RTC/充电分支、30 秒等待和 `sys_poweron_fsm` |
+| 57 PMU 引脚接口实现 | [bf0_hal_pmu_sf32lb57x.c](../SiFli-SDK/drivers/hal/bf0_hal_pmu_sf32lb57x.c)：编号接口有效，`EnablePinWakeup2` 返回错误；[HCPU 包装接口](../SiFli-SDK/middleware/system/bf0_pm.c) |
+| 充电唤醒能力定义 | [bf0_hal_pmu.h](../SiFli-SDK/drivers/Include/bf0_hal_pmu.h)、[57 PMUC 寄存器](../SiFli-SDK/drivers/cmsis/sf32lb57x/pmuc.h) |
+| GUI PM 触摸电源行为 | [gui_app_pm.c](../SiFli-SDK/middleware/system/gui_app_pm.c)：`close_display`、`open_display` |
+| 锁屏仍更新状态栏的位置 | [launcher.c](../src/ui/launcher.c)：`launcher_set_status`；[锁屏页创建](../src/ui/launcher.c)；[状态轮询](../src/ui/ui_app.c) |
+| 电池检测占位分支 | [battery.c](../src/boards/battery/battery.c)：SF32LB57 返回固定值，不能作为 LowBat 的依据 |
+| 业务数据持久化 | [ui_settings_store.c](../src/ui/ui_settings_store.c)、[weather_store.c](../modules/weather/weather_store.c)、[ui_bookshelf_data.c](../modules/books/ui_bookshelf_data.c) |
+| 阅读索引与位置 | [ui_reader.c](../modules/books/ui_reader.c)：`index_save`、`position_save`；[保存入口](../modules/books/ui_reader.c)：`ui_reader_save` |
+| 末端代码的链接放置 | [link.lds](../project/dpi-hdk_lb57gyd7n6_epd_hcpu/link.lds)：内部 RAM 的 `.retm_data` 规则；最终启用配置后以 map 核查调用链 |

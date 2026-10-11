@@ -1,0 +1,85 @@
+# 书架与本地阅读应用设计
+
+## 目的与范围
+
+`books.so` 将本地文件发现、书架、阅读、目录跳转和断点续读组织为一个动态应用。当前[清单](app.json)版本为 10、数据版本为 1，声明常驻后台服务。应用拥有书籍身份、阅读记录及格式适配；平台提供文件系统、字体、输入、显示与模块管理。
+
+当前支持 TXT、Markdown、EPUB、MOBI 四类内容，包括既有分卷 EPUB 和 MOBI/KF7/KF8 兼容路径。入口识别以 [book_format_detect()](formats/formats.c) 为准：
+
+| 内容 | 发现与处理方式 |
+| --- | --- |
+| TXT | `.txt`，通过原 UTF-8/GBK 解码及源文件字节偏移分页。 |
+| Markdown | `.md`、`.markdown`，转换为结构化文档记录后重新排版。 |
+| EPUB | `.epub`，读取 OPF 阅读顺序和 EPUB 2 NCX / EPUB 3 nav 目录。 |
+| 分卷 EPUB | 目录包含 `basepackage.zip` 和有效的 `chapter*.zip`，章节资源可回退基础包。 |
+| MOBI | `.mobi`，由私有 `bk_mobi.so` 解码本地 libmobi 支持的 KF7/KF8 内容。兼容容器不表示书架另有 `.azw3` 扩展名入口。 |
+
+PDF、DOC、DOCX、FB2 等早期扩展目标已取消。当前重排支持基础样式、目录、内部链接和 PNG/JPEG 插图；图片统一为 16 灰阶。完整浏览器 CSS、脚本、嵌入字体、通用 SVG 和 DRM 不在当前能力范围内。
+
+## 组件与执行位置
+
+| 部分 | 职责 |
+| --- | --- |
+| [app_main.c](app_main.c)、[pages.c](pages.c) | UI 线程中的页面生命周期、导航、菜单及输入语义。 |
+| [bookshelf.c](bookshelf.c)、[reader.c](reader.c) | 扫描内部存储与 TF 卡根目录，提供 TXT 文件读取、编码转换和位置。 |
+| [ui_bookshelf_data.c](ui_bookshelf_data.c)、[ui_reader.c](ui_reader.c) | 书架快照、阅读进度、TXT 分页及阅读业务适配。 |
+| [公共阅读组件](../common/reader/README.md) | 提供结构化文档的排版、字体和视图接口，由每个使用它的应用分别编译。 |
+| [document/](document/)、[formats/](formats/)、[image/](image/) | 工作线程中的转换、正文和插图缓存、文件资源读取；显示图片复用[公共图片组件](../common/image/raster.h)。 |
+| [MOBI 私有库](codecs/mobi/README.md) | 转换未缓存的 MOBI 内容，随书架包安装，不建立桌面入口。 |
+
+公共阅读组件的当前构建仍引用 `books/document`、`books/formats` 和 `books/image` 中的实现文件，见 [SConscript](../common/reader/SConscript)。公共 API 与源码复用已经成立，所有实现文件尚未整体搬到公共目录。微信读书分别链接这些源码，不加载 `books.so`。
+
+## 生命周期与状态
+
+平台根据清单启动 `epd_app_background`，卡内应用需先确认加载。其 `run=document_worker` 处理文档工作，`ui_process=service_process` 在 UI 线程推进初始化、分步分页及导航，`flush=books_flush` 返回阅读位置保存结果。服务初始化读取最近阅读记录并向平台发布摘要。
+
+应用根页为书架，阅读页为子页。`ONSTART` 创建控件和框架输入组；`ONRESUME` 恢复前台状态并比较文件、字体和排版设置；`ONPAUSE` 保存焦点、暂停页面交互及处理阅读位置；`ONSTOP` 释放阅读页资源并减少页面引用。系统文本设置通过平台入口打开，返回后按原内容位置重新排版。
+
+文件管理器可通过已实现的[跨应用内容打开](../../docs/CONTENT_HANDLERS.md)将 `.txt`、`.md`、`.markdown`、`.epub`、`.mobi` 文件交给书架。`app_main()` 将请求路径复制到应用自有缓冲区；服务的 UI 处理阶段等待前台页面和显示空闲，再检查来源卷及 TF 卡会话，关闭旧阅读会话并打开指定文件。`ui_bookshelf_include_path()` 为根目录列表之外的文件保留独立活动条目，沿用现有阅读、缓存和历史接口；替换条目前先完成历史写入，根目录列表已满仍可打开子目录文件。
+
+文件交接只接受 `/flash/` 或 `/sdcard/` 下的普通文件；分卷 EPUB 目录继续由书架发现。恢复模式、存储会话失效或请求路径超出框架消息容量时拒绝打开，不截断路径。重复打开同一文件也由框架重新进入应用，页面切换仍遵循原生命周期。
+
+阅读会话依次经历打开、转换或读取缓存、准备目标页、显示、保存和关闭。当前页尚未准备好时保留已有画面；分步计算只在显示空闲时推进。UI 每轮使用 8 ms 软预算处理必要排版与预备工作，该预算不等于硬实时截止时间。总页数完成后更新底栏，不为统计结果重新绘制正文。
+
+更新、卸载或存储退出时，平台拒绝后续使用并请求服务停止。后台结束文件、转换和图片工作；UI 清理等待页面及显示引用结束，再关闭阅读会话、书架写回任务和服务资源。文档私有库在相关转换及文档清理完成后释放。TF 卡移除会统一停止动态应用，因为内部安装的书架也可能读取卡内书籍；清理完成后内部应用可重新运行。
+
+## 数据所有权与接口
+
+UI 拥有页面状态、字体度量结果、当前视图和分页位置；文档工作线程拥有解析上下文、文件句柄和图片准备任务，不能访问 LVGL 控件或字体对象。图片发布到 UI 后，释放前需要结束绘图引用。框架拥有 screen 和页面内存，应用仅释放自己创建的缓存及外部资源。
+
+`ui_bookshelf_save()` 复制阅读记录到待写快照；系统工作队列只读取该快照，不读取可变的 UI 书目对象。切换书籍和重扫前同步旧记录，避免书架序号变化影响待写对象。
+
+[reader.h](../common/reader/reader.h) 定义公共 `epd_reader_*` 接口。打开参数携带应用 ID、缓存路径、内容身份、资源访问及保存回调；接口复制字符串和回调结构。后台调用工作入口，UI 调用分步计算、绑定、保存和回收入口；关闭后仍需完成后台使用及 UI 回收，不能立即释放回调上下文。书架内部另保留 TXT 的专用接口。
+
+## 持久化与缓存
+
+应用通过安装卷定位数据。内部安装使用 `/flash/data/books`、`/flash/cache/books`，卡内安装使用 `/sdcard/.epd/data/books`、`/sdcard/.epd/cache/books`。书籍可以位于另一存储卷，书籍来源卷与应用安装卷需要分别检查。
+
+| 对象 | 保存内容与失效条件 |
+| --- | --- |
+| 阅读记录 | 根据来源卷和相对路径生成名称，以 `.a`、`.b` 文件轮换保存版本、序号、来源属性、位置和校验值；恢复选择最新有效记录。 |
+| TXT 位置和索引 | 原文件字节偏移是恢复依据；文件或字体、字号、行距等排版条件变化后重新分页。 |
+| 重排位置 | 保存转换版本、记录位置和记录内 UTF-8 偏移；字号变化后定位到原内容，不直接复用旧页码。 |
+| `cache/books/documents/` | `.bin` 保存与字号无关的正文及灰阶插图，`.meta` 保存来源与完成信息，`.idx` 保存最近排版的页起点。 |
+
+转换先写临时文件，同步后发布完整记录边界。重新打开时验证来源身份及 Markdown 图片依赖；完整正文缓存命中可跳过转换，同排版索引命中可跳过全书分页。MOBI 正文缓存命中时无需加载私有解码库。
+
+缓存依据实际写入、同步、关闭和分配结果处理错误；空间不足时可以回收不在使用的旧文档缓存，不删除书籍或阅读进度。不完整转换不会标为全书完成。突然断电或拔卡可能丢失未保存的位置；持久化记录和可重建缓存具有不同的重要性。
+
+## 构建与部署
+
+在仓库根目录执行：
+
+```powershell
+. .\SiFli-SDK\export.ps1
+scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu -j8
+scons -C modules APPS=books -j8
+```
+
+已有兼容平台时只构建应用。标准安装包为 `project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/app-resources/books/`，包含 `books.so`、清单、摘要、图标、许可证和 `codecs/bk_mobi.so`。完整复制到 TF 卡 `apps/books` 后通过系统安装；更新沿用安装卷，保留数据。LCD 载板增加对应 `FIRMWARE` 参数，详见[构建说明](../../docs/BUILDING.md)。
+
+## 验证入口与演进
+
+格式入口见 [formats/tests/test_formats.py](formats/tests/test_formats.py)，公共阅读和视图入口见 [reader/tests/run.py](../common/reader/tests/run.py) 与 [run_reader_view_tests.py](../../tests/run_reader_view_tests.py)，缓存服务入口见 [run_cache_service.py](document/tests/run_cache_service.py)。串口入口为 `svc books bookshelf` 和 `svc books reader`，参数由 [command.c](command.c) 定义。
+
+设备验收需要覆盖各支持格式的打开、翻页、字号变化、退出恢复、转换中返回和来源卷移除。性能定义与现有结果见[阅读性能方案](../../docs/READER_PERFORMANCE_PLAN.md)，主机解析结果不能代替面板显示或板上耗时。文件交接已实现，其接口、容量限制和主机验证入口见[跨应用内容打开](../../docs/CONTENT_HANDLERS.md)；摘录等后续业务见[应用演进储备](../../docs/reserves/APPLICATION_EVOLUTION.md)，不扩展当前格式承诺。

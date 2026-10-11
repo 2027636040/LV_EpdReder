@@ -19,6 +19,17 @@ scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu -j8
 固件产物和下载脚本位于 `project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/`。
 普通下载不包含 `fs_root.bin`；生成镜像与是否烧录镜像分别控制。
 
+LCD DevKit 载板连接同款墨水屏时，使用项目侧板级配置：
+
+```powershell
+scons -C project --board=sf32lb57-lcd-gyd7n6_epd_hcpu --board_search_path=../boards -j8
+```
+
+`APPS`、`PREINSTALL`、`STORAGE_IMAGE` 的用法不变。产物目录改为
+`project/build_sf32lb57-lcd-gyd7n6_epd_hcpu/`；单独构建应用时需指定
+`FIRMWARE=build_sf32lb57-lcd-gyd7n6_epd_hcpu`。引脚和硬件配置见
+[LCD DevKit 板级说明](../boards/sf32lb57-lcd-gyd7n6_epd/README.md)。
+
 ## 单个、批量和全部应用
 
 应用构建读取已完成的平台构建，不重新编译主固件：
@@ -29,8 +40,8 @@ scons -C modules APPS=books,gallery -j8
 scons -C modules APPS=all -j8
 ```
 
-`APPS` 支持 `weather`、`books`、`gallery`、`words`，多个 ID 用逗号分隔。
-`all` 明确选择上述四个正式应用；不传参数或使用 `none` 不构建应用。
+`APPS` 支持 `weather`、`books`、`gallery`、`words`、`weread`、`board`，多个 ID 用逗号分隔。
+`all` 明确选择上述六个应用；不传参数或使用 `none` 不构建应用。
 未选择的应用不检查源码和私有依赖；已选择的应用缺少源码或必需资源会报错，不静默跳过。
 新增正式应用时，在 `tools/native_apps.py` 注册该应用的资源和打包规则，即可复用两个入口。
 `modules/hello` 是独立开发示例，构建方式见 [应用开发](APPLICATION_DEVELOPMENT.md)。
@@ -106,3 +117,17 @@ scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu STORAGE_IMAGE=1 PREINSTALL=
 SDK 原生制镜工具使用 Windows 系统 ANSI 编码保存文件名。非 UTF-8 系统环境下，镜像中的非 ASCII
 文件名可能与设备要求的 UTF-8 不一致，构建会明确报错。预置文件可使用英文文件名；中文文件内容不受影响。
 这一边界仅影响电脑端制镜，不改变设备运行时读取 TF 卡中文文件名的能力。
+
+## 动态应用调试符号
+
+固件、动态应用和私有库使用 GNU build-id 匹配精确符号。正常构建在
+`project/build_<board>/debug-artifacts/` 中保留符号和单一清单，不把调试信息放入安装包。
+完整调试包按需执行 `tools/debug_artifacts.py` 导出；故障夹具仅在显式
+`DIAG_FIXTURES=1` 时构建。命令、转储范围和手工 GDB 操作见
+[动态应用故障取证](DYNAMIC_APP_DEBUGGING.md)。
+
+## 独立开发与发布
+
+不包含平台仓库的独立应用工程使用 [应用开发包](APP_SDK.md)。配置式信息看板可先用
+[桌面预览](BOARD_TEMPLATES.md) 检查布局，再构建同一份布局代码。
+完整构建结束后，使用 [发布目录工具](RELEASING.md) 核对所有待交付应用的兼容标识和资源摘要。

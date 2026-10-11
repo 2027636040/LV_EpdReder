@@ -6,15 +6,26 @@
 
 图片显示采用“独立图片服务、可选择的解码后端、app_fwk 相册页面”组织方式。JPEG 优先使用 SF32LB57 的 JPEGD 硬件解码器和 EPIC 图形引擎；超过硬件路径资源限制的大图使用软件流式解码。PNG 使用逐行解码。所有路径先生成适配显示区域的图像，再一次性发布给 UI。
 
-目标能力包括：从 TF 卡和 NOR 文件系统读取 PNG/JPEG；图片等比缩放；彩色图像转灰度；普通灰阶、16 灰阶、抖动效果对比；大图解码的内存占用不随原图总像素数直接增长。
+目标能力包括从 TF 卡和 NOR 文件系统读取 PNG/JPEG、等比缩放及统一 16 灰阶显示。软件路径以逐行或分块处理避免保留完整原图；当前硬件 AHB 路径仍需要原尺寸对齐输出。普通灰阶、抖动效果对比及模式切换目标已取消。
 
-技术基线为 `dpi-hdk_lb57gyd7n6_epd_hcpu`、SF32LB57GYD7N6、E0470A03、LVGL V9，显示方向为 684×1216。SDK 固定提交为 `a25ebccdb986a98070287cf1701dc5adb10a265d`。项目工作区包含 app_fwk、输入及显示优化，已有 SDK 缓存比较类型和 TLS 证书修复与图片功能独立。
+技术基线为 `dpi-hdk_lb57gyd7n6_epd_hcpu`、SF32LB57GYD7N6、E0470A03、LVGL V9，显示方向为 684×1216。SDK 机制研究基线为 `a25ebccdb986a98070287cf1701dc5adb10a265d`，实际接口和编译条件以仓库当前 SDK 及所选板型配置为准。
 
-本文区分三类内容：方案形成时源码和生成配置能够证明的现状、实现建议、需要编译或上板确认的能力。硬件 JPEG 吞吐、峰值内存和最终显示质量均无本项目的实测结果。
+当前图库已作为 `gallery.so` 实现，详见[图库设计](../modules/gallery/DESIGN.md)和[应用说明](../modules/gallery/README.md)。本文保留方案形成时的 SDK 后端研究及后续候选，具体性能结论需要对应硬件、输入样本和测量窗口，不能由机制分析推出。
 
-## 2. 已确认的本地实现与边界
+| 当前能力 | 源码落点与边界 |
+|---|---|
+| 双存储浏览 | 图库浏览 `/flash` 和 `/sdcard` 普通目录，每页八项，不要求固定 `/pictures`。 |
+| PNG | 已使用项目侧 libpng/zlib，包含逐行、透明与 Adam7 处理，不展开原尺寸整张 RGBA 图。 |
+| 软件 JPEG | 已独立编译 TJpgDec，输出亮度并支持按目标尺寸选择缩小比例；不是直接沿用 SDK 原配置。 |
+| 硬件 JPEG | 当前采用 JPEGD AHB 对齐 YUV 输出及软件亮度缩放，资源不足或解码失败可回退软件；JPEGD→EPIC 直接缩放仍为候选。 |
+| 显示及缓存 | 查看区域为 620×966，统一 16 灰阶；安装卷保存两个 4 位灰度缓存槽。 |
+| 生命周期 | 按需受管线程、请求代次和结果引用均已实现，显示引用结束后才释放像素。 |
 
-| 对象 | 已确认事实 | 接入影响 |
+以下第 2 节是早期 SDK 评估基线，第 4 节保留候选机制比较；当前实现不采用其中已被替代的入口、目录或固定内存预算。其他有效储备见[技术储备索引](TECHNICAL_RESERVES.md)。
+
+## 2. 方案形成时的 SDK 评估基线
+
+| 对象 | 当时的实现事实 | 当时的接入判断 |
 |---|---|---|
 | 相册入口 | 已有 `UI_PAGE_ALBUM`，创建时仍进入通用预留页面 | 实现相册列表和图片查看页，复用现有导航 |
 | 文件系统 | 启动先尝试把 TF 卡挂载到 `/`，失败后尝试 NOR；任一成功即结束 | 尚不能据此认为 TF 和 NOR 已同时可访问 |
@@ -34,13 +45,13 @@ JPEGD 的 `HAL_JPEGD_GetDim()` 能读取 SOF0 和 SOF2 标记中的尺寸，但�
 
 ## 3. 组件划分与数据流
 
-建议划分三个项目组件，不改变天气、阅读、网络服务的职责：
+以下职责已分别落在图库应用和公共图片组件，具体源码映射见[图库设计](../modules/gallery/DESIGN.md)：
 
 | 组件 | 负责的内容 | 对外结果 |
 |---|---|---|
 | 图片服务 | 查询存储挂载点、扫描图片、读取文件、选择解码器、取消旧任务、管理图像内存 | 文件列表、状态快照、带请求编号的完成结果 |
-| 图像处理组件 | 等比缩放、透明度合成、灰度转换、16 级量化、抖动 | 已适配显示区域的稳定图像缓冲 |
-| 相册 UI | 页面、焦点、模式选择、图片切换和显示结果接收 | 用户请求；不持有解码器内部对象 |
+| 图像处理组件 | 等比缩放、透明度合成、灰度转换、16 级量化 | 已适配显示区域的稳定图像缓冲 |
+| 相册 UI | 页面、焦点、图片切换和显示结果接收 | 用户请求；不持有解码器内部对象 |
 
 处理顺序为：
 
@@ -48,7 +59,7 @@ JPEGD 的 `HAL_JPEGD_GetDim()` 能读取 SOF0 和 SOF2 标记中的尺寸，但�
 2. 图片服务读取文件头，确定尺寸、编码、存储来源及资源需求。
 3. 选择硬件 JPEG、软件 JPEG 或逐行 PNG 后端。
 4. 将解码结果等比缩放，并生成显示尺寸的 8 位灰度图。
-5. 从灰度图生成普通灰阶、16 灰阶或抖动显示结果。
+5. 从灰度图生成统一的 16 灰阶显示结果。
 6. UI 线程接收仍然有效的结果，替换图像对象的数据源并请求一次内容更新。
 7. 旧图像的绘制引用结束后释放缓冲。
 
@@ -68,13 +79,13 @@ JPEGD 的 `HAL_JPEGD_GetDim()` 能读取 SOF0 和 SOF2 标记中的尺寸，但�
 
 SF32LB57 的 `EPIC_COORDINATES_MAX` 为 505，当前驱动对超过单次范围的输出执行拆分。因此，硬件缩放是否引起重复解码、拆分边界是否影响结果以及总耗时，需要实测；不能把一次上层请求等同于一次硬件扫描。相册只在最终图像完成后刷新面板，不将这些内部拆分直接显示。
 
-AHB 输出可用于小图验证，但不作为大图默认路径。它需要原尺寸、按 16×16 对齐的 Y/U/V 输出缓冲。压缩文件很小也可能解出很大的图像，资源选择同时考虑文件大小和像素尺寸。
+当前实现选择 AHB 输出作为符合编码条件时的优先尝试，并在申请失败或硬件解码失败后回退软件。AHB 需要原尺寸、按 16×16 对齐的 Y/U/V 输出缓冲；压缩文件很小也可能解出很大的图像，实际工作集随源尺寸增长。上述 JPEGD→EPIC 直接缩放仍保留为候选比较路径。
 
 ### 4.2 软件 JPEG 流式路径
 
 复用 SDK 的 TJpgDec 核心，通过 `jd_prepare()` 的读取回调分块读取文件，通过 `jd_decomp()` 的输出回调接收 JPEG 最小编码单元对应的小块像素。必要时拼接少量行，供缩放器处理，不保留完整原尺寸彩色图。
 
-本地输出配置为 RGB888，解码内缩小功能未启用。第一版可在项目侧完成缩放，保持 SDK 文件不变；不能直接把非零缩小参数传给当前配置的 `jd_decomp()`。后续若需要在解码阶段降低 CPU 运算量，再单独评估项目侧组件配置与代码复用方式。
+早期 SDK 副本的输出配置为 RGB888，解码内缩小功能未启用。当前图库已经使用项目侧独立 TJpgDec 配置，输出亮度并支持按目标尺寸选择 1、1/2、1/4 或 1/8 比例；不能把 SDK 副本的限制套用到该配置。实现及配置见[项目 TJpgDec](../modules/common/image/third_party/tjpgd/README.md)。
 
 当前软件后端明确支持范围是其实现接受的基线 JPEG 及采样组合。渐进式、无损 JPEG、CMYK 等编码不能笼统归入“软件回退即可支持”。这些文件应被明确识别；是否另加解码组件属于开发前需要确定的兼容范围。现有后端无法覆盖时显示具体的格式不支持结果，不把格式限制误报成文件损坏。
 
@@ -82,11 +93,11 @@ JPEG 按小块而非任意单行解码符合低内存目标；验收重点是工
 
 ### 4.3 PNG 逐行路径
 
-建议在项目侧引入 libpng 和 zlib，固定依赖版本并保留许可证。使用 libpng 的读取回调和 `png_read_row()`，不使用 LVGL 当前整图解码适配。保留 UI 资源 EZIP，不开启 LodePNG。
+项目侧已经引入 libpng 和 zlib，固定依赖版本并保留许可证。公共图片组件使用读取回调和逐行接口，UI 资源继续使用 EZIP，不开启 LodePNG。
 
-普通非交错 PNG 按行处理：展开调色板和低位深数据、处理透明度、按约定转换为 8 位通道，然后执行白底合成、缩放和灰度生成。输入窗口、少量行缓冲和目标图像构成主要内存；设置像素尺寸、行宽与内存上限，超限返回明确结果。
+普通非交错 PNG 按行处理：展开低位深数据、处理透明度、按约定转换为 8 位通道，然后执行白底合成、缩放和灰度生成；调色板可以通过亮度查表处理。输入窗口、少量行缓冲和目标图像构成主要内存。当前检查尺寸运算的可表示范围和实际分配结果，不另外设置源边长、像素数或会话累计内存门槛。
 
-交错 PNG（Adam7）分多遍提供不同坐标的像素，不是连续完整行。建议采用子图逐行读取，把有效像素映射到目标尺寸的重采样状态，在所有遍完成后生成结果。该路径需要单独设计目标累加缓冲及内存预算，不能直接套用普通 PNG 的行缓冲估算，也不采用保存整张原图来合并各遍的默认做法。
+交错 PNG（Adam7）分多遍提供不同坐标的像素，不是连续完整行。当前实现把各遍有效像素映射到目标尺寸的累加缓冲，在全部遍次完成后生成结果，不保存原尺寸整图；该工作集仍大于普通 PNG 的逐行累加，需要单独计入峰值。
 
 初步测试集应包含 RGB、RGBA、调色板、透明色、灰度、16 位通道和 Adam7。对色彩空间、Gamma 信息采取一致的解释策略，避免同一图片在不同后端获得明显不同的亮度；具体策略及成本在组件接入时确定。
 
@@ -102,19 +113,11 @@ JPEG 按小块而非任意单行解码符合低内存目标；验收重点是工
 
 透明 PNG 先处理透明度与白底合成，再输出灰度。EXIF 方向是图片内容的方向信息，与面板驱动现有竖屏旋转属于不同层次；需要在读取元数据后明确支持策略，不改变面板扫描方向。
 
-### 5.2 三种处理模式
+### 5.2 统一 16 灰阶
 
-| 模式 | 图像处理定义 | 面板最终结果 |
-|---|---|---|
-| 普通灰阶 | 保留显示尺寸的 8 位亮度，不在图片服务中主动量化到 16 级 | 经 RGB565 和现有驱动转换后仍是 16 级驱动值 |
-| 16 灰阶 | 将亮度主动映射到 16 个确定等级，使用匹配驱动的输出颜色表 | 16 个可验证的目标驱动等级 |
-| 抖动 | 建议使用 16 灰阶 Floyd–Steinberg 误差扩散，把量化误差分配到邻近像素 | 用空间分布改善明暗过渡，不增加物理灰阶等级 |
+当前处理次序为缩放后量化，亮度映射到 0、17、34……255 共 16 个等级，再生成 RGB565 显示像素。颜色表需要对应 `RGB565_TO_GRAY4()` 的实际转换，保证目标等级经过显示路径后保持一致。
 
-处理次序为“缩放后量化或抖动”。先抖动再缩小会改变点阵分布。抖动是静态像素运算，不使用动画或反复刷屏。
-
-颜色表要通过当前 `RGB565_TO_GRAY4()` 的实际公式校验，确保每个目标等级经过最终转换仍保持该等级。普通灰阶和主动 16 级量化的效果可能接近，不人为增加对比度差异来制造区别。硬件输出若使用 RGB565，会先损失部分通道精度；若使用 RGB888，则增加临时内存。最终选择应同时验证亮度一致性和内存峰值。
-
-保留一份显示尺寸的基础灰度图，模式切换无需重新读文件。相册支持单图切换模式；效果对照使用相同源区域、相同比例和相同白底，避免把布局变化误认为算法效果。并排对照属于建议交互，最终布局在页面开发时确定。
+普通灰阶、抖动及并排模式比较已取消。解码后的临时灰度图在生成显示结果后释放，不为模式切换常驻；重复打开由最终 4 位灰度缓存处理。
 
 ## 6. 内存、并发和页面生命周期
 
@@ -131,11 +134,11 @@ JPEG 按小块而非任意单行解码符合低内存目标；验收重点是工
 
 表中是像素数据量，不包括行对齐、分配头、解码器状态和其他业务。实际预算为：
 
-`峰值 = 尚在使用的旧图 + 新图输出 + 同时存活的灰度图 + 压缩输入 + 解码工作区 + 缩放/抖动状态 + 对齐及分配开销`
+`峰值 = 尚在使用的旧图 + 新图输出 + 同时存活的灰度图 + 压缩输入 + 解码工作区 + 缩放状态 + 对齐及分配开销`
 
-硬件路径还要考虑缩放临时图。交错 PNG 的目标累加状态也单独计入。通过阶段间及时释放中间结果降低峰值，而不是默认永久保存三套完整效果图。
+硬件路径还要考虑缩放临时图，交错 PNG 的目标累加状态也单独计入。各阶段完成后及时释放中间结果，当前仅保留有效显示图及必要的后台引用。
 
-6 MiB 是共享图片池的配置容量，不是相册始终可用的连续空间。图片服务应使用带配对释放的项目侧 PSRAM 分配接口，明确硬上限和失败结果，不依赖 `app_cache_alloc()` 向系统堆回退的行为。按行缓冲仍随源宽度增长，因此要有最大行宽，不能承诺任意尺寸文件都可处理。
+早期 6 MiB 图片池不是当前图库独占空间。当前大缓冲使用共享 RAM1 堆，解码热点工作区按应用说明中的 RAM0/RAM1 策略申请；实际可用容量由连续空闲块及其他使用者共同决定。源行缓冲仍随源宽度增长，尺寸计算和分配失败会终止任务，不能承诺任意尺寸文件都可处理。
 
 ### 6.2 异步结果与硬件缓存
 
@@ -152,19 +155,19 @@ JPEG 按小块而非任意单行解码符合低内存目标；验收重点是工
 | 生命周期 | 相册职责 |
 |---|---|
 | `ONSTART` | 创建页面控件和焦点组，建立页面会话；提交必要的扫描或读取请求 |
-| `ONRESUME` | 恢复选中图片、列表位置和模式；比较数据版本，只更新变化内容 |
+| `ONRESUME` | 恢复选中图片和列表位置；比较数据版本，只更新变化内容 |
 | `ONPAUSE` | 停止向该页面发布显示更新，保存选择状态；按资源策略取消页面专属未完成请求 |
 | `ONSTOP` | 使页面请求失效，解除页面引用；安全释放自有图像资源，框架拥有的屏幕由框架销毁 |
 
-锁屏恢复保留原页面和选择。页面暂停不改变天气、分页、PAN、NTP 等独立服务。图片缓存的保留量受内存预算约束，不能因为框架保留页面就无限保留大图。
+列表返回已保留当前目录和选择；系统锁屏及 PM 恢复按 [PM 储备](PM_TECHNICAL_RESERVE.md)另行接入。页面暂停不停止天气、PAN、NTP 等独立服务。图像缓冲由实际引用决定释放时机，不因框架保留页面而无限保留大图。
 
 ## 7. 存储与墨水屏刷新策略
 
 ### 7.1 双存储访问
 
-保留现有根挂载点的兼容行为，查询实际设备的挂载路径，为另一种可用存储增加独立挂载点。相册按存储身份和实际路径访问文件，不固定把 `/` 解释为 TF 卡，也不重复挂载已挂载的设备。
+当前内部文件系统挂载于 `/flash`，TF 卡挂载于 `/sdcard`，挂载与移除由平台存储服务管理。图库按实际路径和存储可用性访问，不另行挂载设备。
 
-图片目录建议使用各存储上的 `/pictures`；目录名和递归范围在实现前确定为统一规则。扫描支持 `.png`、`.jpg`、`.jpeg` 及大小写变体，读取时通过文件内容判定格式。中文名称使用现有文件系统编码配置。挂载失败或不存在的目录显示对应状态，不自动格式化 NOR。
+图库浏览两个存储卷的普通目录，不要求 `/pictures`。扫描支持 `.png`、`.jpg`、`.jpeg` 及大小写变体，读取时通过文件内容判定格式。中文名称使用现有文件系统编码配置。挂载失败或不存在的目录显示对应状态，不自动格式化 NOR。
 
 拔卡、读取失败或同路径文件被替换时，当前任务退出并保留已有稳定画面或显示一次错误结果；再次插卡后重新建立存储和文件身份。现有书籍、天气配置和持久化文件的路径不随相册接入迁移。
 
@@ -172,18 +175,20 @@ JPEG 按小块而非任意单行解码符合低内存目标；验收重点是工
 
 解码行、小块、PNG 交错扫描遍次和 EPIC 内部分块只写内存，不分别触发面板刷新。完整结果准备好后提交一次 UI 内容更新；“一次提交”不等于保证底层只进行一次传输，实际仍需检查 LVGL 合并和当前显示路径。
 
-模式切换只使图片区域和必要文字失效。未完成请求可合并，但确认和返回保持明确顺序。等待过程不使用旋转图标、光标闪烁或定时进度重绘。
+图片结果提交只使图片区域和必要文字失效。未完成请求可合并，但确认和返回保持明确顺序。等待过程不使用旋转图标、光标闪烁或定时进度重绘。
 
 继续使用现有全刷周期和全刷请求入口，不在图片服务中新增独立的波形选择。局刷未变化灰度不驱动、原有残影修复、缓存同步、刷新后面板断电以及连续刷新处理均保持原有职责。普通数据变化不通过销毁重建页面实现。
 
 ## 8. 实施顺序与验证标准
+
+下表保留原有分层验收关系。双存储、软件流式后端、16 灰阶页面与结果生命周期均已有实现；硬件当前使用 AHB 路径，JPEGD→EPIC 缩放及系统锁屏恢复仍需独立实现或验证。
 
 | 阶段 | 实施内容 | 完成判断 |
 |---|---|---|
 | 1. 基础服务 | 双存储路径、图片索引、文件头解析、资源预算和请求编号 | 两种存储均能列出图片；失败来源明确；旧业务路径保持兼容 |
 | 2. 硬件 JPEG | 项目侧读取与 JPEGD/EPIC 调用、输出缩放、互斥和缓存同步 | 小图、宽图、非对齐尺寸及拆分边界结果正确；超限在硬件启动前转入其他路径 |
 | 3. 流式后端 | TJpgDec 输入/输出回调；libpng/zlib 逐行与交错处理 | 大图无需完整原图缓冲；编码支持范围明确；坏文件可退出并释放资源 |
-| 4. 处理及 UI | 等比缩放、三种模式、列表与查看页、状态恢复 | 返回和锁屏恢复正确；模式切换不重复解码，不依赖后台重绘 |
+| 4. 处理及 UI | 等比缩放、16 灰阶、列表与查看页、状态恢复 | 返回后恢复列表，重复打开可命中缓存，不依赖后台重绘 |
 | 5. 上板验证 | 性能、内存、连续输入、介质移除与显示质量 | 没有资源泄漏、旧结果覆盖、条纹或无操作持续刷新；测量结果支持所选预算 |
 
 建议上板用例：
@@ -198,33 +203,33 @@ JPEG 按小块而非任意单行解码符合低内存目标；验收重点是工
 
 分别测量文件读取、解码/缩放、灰阶处理、UI 发布到刷新完成的耗时，记录图片编码、尺寸、压缩大小、输出区域、使用的后端及峰值内存。现有性能未测量，不能事先承诺固定加载时间。
 
-开发前需要确定或验证的事项：渐进式/CMYK JPEG 的兼容范围；EXIF 方向策略；图片目录和扫描范围；硬件 JPEG 支持的采样组合；EPIC 工作区与拆分行为；交错 PNG 的低内存算法；整个图片服务的峰值预算。项目侧组件和构建配置优先完成接入，若必须新增 SDK 修改，再单独确定最小变更范围。
+当前渐进式/CMYK JPEG 不支持，EXIF 方向不自动旋转；目录浏览、硬件 4:2:0 准入和 Adam7 目标尺寸累加已有实现。后续候选主要是 JPEGD→EPIC 工作区、拆分行为和缩放结果比较；实际加载耗时、峰值及面板效果需按样本测量。
 
 ## 9. 源码与外部依据
 
 | 主题 | 位置 |
 |---|---|
-| 相册预留与页面创建 | [launcher.c](/D:/program/LV_EpdReder/src/ui/launcher.c:997) |
-| 页面生命周期 | [launcher.c](/D:/program/LV_EpdReder/src/ui/launcher.c:1061) |
-| 根文件系统挂载 | [board_service.c](/D:/program/LV_EpdReder/src/boards/board_service.c:99) |
-| 现有 TF 挂载路径查询 | [weather_store.c](/D:/program/LV_EpdReder/src/services/weather/weather_store.c:114) |
-| 图片功能生成配置 | [rtconfig.h](/D:/program/LV_EpdReder/project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/rtconfig.h:357) |
-| JPEGD 本地完整例程 | [main.c](/D:/program/LV_EpdReder/SiFli-SDK/example/hal/jpegd/src/main.c:1) |
-| JPEGD HAL 接口 | [bf0_hal_jpegd.h](/D:/program/LV_EpdReder/SiFli-SDK/drivers/Include/bf0_hal_jpegd.h:1) |
-| AHB 整图输出与连续输入 | [bf0_hal_jpegd.c](/D:/program/LV_EpdReder/SiFli-SDK/drivers/hal/bf0_hal_jpegd.c:112) |
-| 工作区和输出尺寸计算 | [bf0_hal_jpegd.c](/D:/program/LV_EpdReder/SiFli-SDK/drivers/hal/bf0_hal_jpegd.c:391) |
-| JPEGD/EPIC 区域配置 | [bf0_hal_epic.c](/D:/program/LV_EpdReder/SiFli-SDK/drivers/hal/bf0_hal_epic.c:3806) |
-| 共享 JPEGD 工作缓冲分配 | [drv_epic.c](/D:/program/LV_EpdReder/SiFli-SDK/rtos/rtthread/bsp/sifli/drivers/drv_epic.c:99) |
-| EPIC 单次输出范围 | [bf0_hal_epic.h](/D:/program/LV_EpdReder/SiFli-SDK/drivers/Include/bf0_hal_epic.h:217) |
-| EPIC 变换、互斥和拆分 | [drv_epic_single.c](/D:/program/LV_EpdReder/SiFli-SDK/rtos/rtthread/bsp/sifli/drivers/drv_epic_single.c:1188) |
-| LVGL 硬件 JPEG 文件 TODO | [lvsf_jpeg_decoder.c](/D:/program/LV_EpdReder/SiFli-SDK/middleware/lvgl/lv_drivers_v9/lvsf_jpeg_decoder.c:95) |
-| EZIP 资源解码 | [lvsf_img_decoder.c](/D:/program/LV_EpdReder/SiFli-SDK/middleware/lvgl/lv_drivers_v9/lvsf_img_decoder.c:55) |
-| TJpgDec 流式解码核心 | [tjpgd.c](/D:/program/LV_EpdReder/SiFli-SDK/external/lvgl_v9/src/libs/tjpgd/tjpgd.c:1103) |
-| TJpgDec 格式限制 | [tjpgd.c](/D:/program/LV_EpdReder/SiFli-SDK/external/lvgl_v9/src/libs/tjpgd/tjpgd.c:1075) |
-| TJpgDec 本地输出及缩放配置 | [tjpgdcnf.h](/D:/program/LV_EpdReder/SiFli-SDK/external/lvgl_v9/src/libs/tjpgd/tjpgdcnf.h:8) |
-| LVGL libpng 整图读取路径 | [lv_libpng.c](/D:/program/LV_EpdReder/SiFli-SDK/external/lvgl_v9/src/libs/libpng/lv_libpng.c:208) |
-| 图片分配及系统堆回退 | [app_mem.c](/D:/program/LV_EpdReder/SiFli-SDK/middleware/lvgl/app_mem.c:607) |
-| 当前 16 灰阶转换 | [epd_e0470a03.c](/D:/program/LV_EpdReder/SiFli-SDK/customer/peripherals/display/epd_e0470a03/epd_e0470a03.c:363) |
+| 图库页面及生命周期 | [gallery_ui.c](../modules/gallery/gallery_ui.c) |
+| 后台与图像引用 | [gallery_service.c](../modules/gallery/gallery_service.c) |
+| 双存储挂载与路径 | [storage.c](../src/services/storage.c) |
+| 当前图片缓存 | [gallery_cache.c](../modules/gallery/gallery_cache.c) |
+| 图片构建入口 | [公共图片 SConscript](../modules/common/image/SConscript)、[proj.conf](../project/proj.conf)；最终宏在所选构建目录核对 |
+| JPEGD 本地完整例程 | [main.c](../SiFli-SDK/example/hal/jpegd/src/main.c) |
+| JPEGD HAL 接口 | [bf0_hal_jpegd.h](../SiFli-SDK/drivers/Include/bf0_hal_jpegd.h) |
+| AHB 整图输出与连续输入 | [bf0_hal_jpegd.c](../SiFli-SDK/drivers/hal/bf0_hal_jpegd.c) |
+| 工作区和输出尺寸计算 | [bf0_hal_jpegd.c](../SiFli-SDK/drivers/hal/bf0_hal_jpegd.c) |
+| JPEGD/EPIC 区域配置 | [bf0_hal_epic.c](../SiFli-SDK/drivers/hal/bf0_hal_epic.c) |
+| 共享 JPEGD 工作缓冲分配 | [drv_epic.c](../SiFli-SDK/rtos/rtthread/bsp/sifli/drivers/drv_epic.c) |
+| EPIC 单次输出范围 | [bf0_hal_epic.h](../SiFli-SDK/drivers/Include/bf0_hal_epic.h) |
+| EPIC 变换、互斥和拆分 | [drv_epic_single.c](../SiFli-SDK/rtos/rtthread/bsp/sifli/drivers/drv_epic_single.c) |
+| LVGL 硬件 JPEG 文件 TODO | [lvsf_jpeg_decoder.c](../SiFli-SDK/middleware/lvgl/lv_drivers_v9/lvsf_jpeg_decoder.c) |
+| EZIP 资源解码 | [lvsf_img_decoder.c](../SiFli-SDK/middleware/lvgl/lv_drivers_v9/lvsf_img_decoder.c) |
+| TJpgDec 流式解码核心 | [tjpgd.c](../SiFli-SDK/external/lvgl_v9/src/libs/tjpgd/tjpgd.c) |
+| TJpgDec 格式限制 | [tjpgd.c](../SiFli-SDK/external/lvgl_v9/src/libs/tjpgd/tjpgd.c) |
+| TJpgDec 本地输出及缩放配置 | [tjpgdcnf.h](../SiFli-SDK/external/lvgl_v9/src/libs/tjpgd/tjpgdcnf.h) |
+| LVGL libpng 整图读取路径 | [lv_libpng.c](../SiFli-SDK/external/lvgl_v9/src/libs/libpng/lv_libpng.c) |
+| 图片分配及系统堆回退 | [app_mem.c](../SiFli-SDK/middleware/lvgl/app_mem.c) |
+| 当前 16 灰阶转换 | [epd_e0470a03.c](../SiFli-SDK/customer/peripherals/display/epd_e0470a03/epd_e0470a03.c) |
 
 外部参考仅用于补充通用组件机制：
 

@@ -1,5 +1,9 @@
 # 应用平台与存储实施方案
 
+本文保留早期五个阶段的设计和实施记录，其中的版本、容量快照及当时构建命令仅对应所述阶段。
+当前架构以 [平台架构](ARCHITECTURE.md) 为入口，当前构建使用 [构建说明](BUILDING.md)，
+后续方向见 [平台演进](PLATFORM_ROADMAP.md)。
+
 ## 第一阶段结论
 
 平台复用当前 SiFli SDK 的 app_fwk、RT-Thread 动态模块、DFS、LittleFS、FatFs 和 EZIP。
