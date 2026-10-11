@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      name="description"
+      content="SiFli EPD 平台：架构、构建、动态应用开发与技术储备。"
+    />
+    <title>EPD 平台知识库</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23196d60'/%3E%3Cpath d='M9 8h14M9 16h11M9 24h14' stroke='white' stroke-width='3'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="assets/site.css" />
+    <script defer src="vendor/marked.umd.js"></script>
+    <script defer src="vendor/purify.min.js"></script>
+    <script defer src="assets/content.js"></script>
+    <script defer src="assets/core.js"></script>
+    <script defer src="assets/site.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到正文</a>
+    <header class="header">
+      <button
+        id="menu-toggle"
+        class="icon-button"
+        aria-label="打开文档目录"
+        aria-expanded="false"
+        aria-controls="sidebar"
+      >
+        ☰
+      </button>
+      <a class="brand" href="#/" aria-label="EPD 平台知识库首页"
+        ><span class="brand-mark" aria-hidden="true">E</span
+        ><span>EPD <span class="brand-sub">/ 平台知识库</span></span></a
+      >
+      <span class="header-tag">开发者文档</span>
+      <button id="search-open" class="search-open" aria-label="搜索文档">
+        <svg
+          aria-hidden="true"
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+        >
+          <circle cx="10.5" cy="10.5" r="6.5" />
+          <path d="m16 16 5 5" /></svg
+        ><span>搜索文档</span><kbd>Ctrl K</kbd>
+      </button>
+    </header>
+    <div class="shell">
+      <aside id="sidebar" class="sidebar" aria-label="文档目录">
+        <a class="nav-home" href="#/">知识库首页</a>
+        <nav id="navigation"></nav>
+        <div class="sidebar-foot">
+          <span class="status-dot"></span> 本地文档 · 离线可用
+        </div>
+      </aside>
+      <button
+        id="nav-backdrop"
+        class="nav-backdrop"
+        aria-label="关闭文档目录"
+        hidden
+      ></button>
+      <main id="main" tabindex="-1">
+        <noscript
+          >请启用 JavaScript，或阅读
+          <a href="../docs/README.md">Markdown 文档索引</a>。</noscript
+        >
+        <div class="loading">正在载入知识库…</div>
+      </main>
+      <aside id="toc" class="toc" aria-label="本页目录"></aside>
+    </div>
+    <dialog id="search-dialog" aria-labelledby="search-title">
+      <div class="search-head">
+        <label id="search-title" for="search-input">搜索知识库</label
+        ><button id="search-close" class="icon-button" aria-label="关闭搜索">
+          ×
+        </button>
+      </div>
+      <input
+        id="search-input"
+        type="search"
+        placeholder="输入关键词，例如：生命周期、预装、PSRAM"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <p
+        id="search-status"
+        class="search-status"
+        role="status"
+        aria-live="polite"
+      ></p>
+      <div id="search-results" class="search-results"></div>
+      <div class="search-foot">
+        搜索标题与正文
+        <span
+          ><kbd>Tab</kbd> 选择 <kbd>Enter</kbd> 打开 <kbd>Esc</kbd> 关闭</span
+        >
+      </div>
+    </dialog>
+    <div id="notice" class="notice" role="status" aria-live="polite"></div>
+  </body>
+</html>

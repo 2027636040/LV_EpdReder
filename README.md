@@ -1,43 +1,55 @@
 # LV_EpdReder
 
-基于 **RT-Thread + LVGL v9** 的墨水屏（EPD）阅读器工程。
+基于 SiFli SDK、RT-Thread 和 LVGL V9 的墨水屏应用平台。主固件提供桌面、设置、文件管理、存储、网络和动态应用运行支持；天气、书架、图库、单词、微信读书及信息看板分别构建和安装。
 
-目标功能见 [RT-Thread + LVGL 墨水屏 Demo 软件需求](RT-Thread%20+%20LVGL%20墨水屏%20Demo%20软件需求.html)：
-锁屏 / 主页 Launcher / 书架 / TXT 阅读器 / 设置 / 文本设置 / 天气 / 城市选择 / 文件传输 / BLE Wi-Fi 配网 / 关于设备，支持 KEY1/2/3 导航与触摸。
+## 文档入口
 
-## 硬件
-| 项 | 规格 |
-|---|---|
-| 板卡 | SF32LB57GYD7N6（`customer/boards/dpi-hdk_lb57gyd7n6_epd`）|
-| 屏幕 | E0470A03 4.7" 8bit EPD，1216×684（UI 竖屏 684×1216）|
-| 波形 | 打库二进制波形（`EPD_WAVEFORM_USE_BIN`，SDMODE=1 / VCOM=-2.10V）|
-| 输入 | KEY1/KEY2/KEY3 + GT967 触摸 |
-| 存储 | TF 卡（FAT32，书籍直接放根目录）+ 内置 fs_root |
+- [网页知识库](doc/index.html)：离线阅读、分类导航、全文搜索与页内目录。
+- [平台架构](docs/ARCHITECTURE.md)：分层、执行流程、数据和资源所有权。
+- [开发文档索引](docs/README.md)：应用开发、部署、诊断与各应用设计。
+- [平台与应用构建](docs/BUILDING.md)：环境、板型、应用选择和工厂预装。
+- [平台演进](docs/PLATFORM_ROADMAP.md)与[技术储备](docs/TECHNICAL_RESERVES.md)：已实现能力与后续设计。
+- [实施与验证清单](docs/PLATFORM_IMPLEMENTATION_TODO.md)：本轮集成状态及上板检查。
 
-## 依赖
+## 硬件与依赖
 
-- SiFli-SDK 子模块，固定为 main 分支提交 `a25ebccdb986a98070287cf1701dc5adb10a265d`；通过环境变量 `SIFLI_SDK` 指向 SDK 目录。
-- 屏幕驱动与波形：工程需要 SDK 中的 `customer/peripherals/display/epd_e0470a03/` 专用驱动及其 `waveform/` 资源。`project/Kconfig.proj` 的板级选择项启用 SDK 的 `LCD_USING_EPD_E0470A03`。
-- SD 卡组件：由 `project/sf-pkg.yaml` 声明 `epd-sdcard` 组件及版本，构建时使用项目的组件包配置。
+| 项目 | 当前参考配置 |
+| --- | --- |
+| 主控 | SF32LB57GYD7N6 |
+| 载板 | SDK DPI-HDK，或项目内 LCD DevKit 配置 |
+| 显示 | E0470A03，UI 为 684×1216 竖屏；两种载板均连接墨水屏 |
+| 存储 | 内部 NOR 使用 LittleFS，TF 使用 FatFs |
+| 网络 | 蓝牙 PAN；Wi-Fi 适配接口已预留，具体驱动尚未接入 |
+| 输入 | 平台统一触摸与开发板按键，实际引脚和触摸装配按板型确定 |
 
-## 构建
+SDK 通过仓库子模块与本地补丁管理。屏幕驱动和波形位于
+`SiFli-SDK/customer/peripherals/display/epd_e0470a03/`。
+SD 组件由 `project/sf-pkg.yaml` 声明，准备方法见 [组件说明](components/sdcard/README.md)。
+精确构建配置记录在板型输出目录的 `app-profile.json` 中。
 
-### 平台构建
+## 快速构建
 
-在仓库根目录执行：
+在仓库根目录的 PowerShell 中激活 SDK：
 
 ```powershell
 . .\SiFli-SDK\export.ps1
 scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu -j8
 ```
 
-平台默认构建固件、配套启动镜像、公共资源、波形和 `fs_root.bin`，不构建动态应用。
-`fs_root.bin` 使用 SDK 自带的 `tools/mklfsimg/mklfsimg.exe` 打包 `disk/` 初始内容。
-固件产物和下载脚本位于 `project/build_dpi-hdk_lb57gyd7n6_epd_hcpu/`。
+默认只编译平台，不依赖动态应用源码、单词词库或 Node.js。SDK 原生工具生成
+`fs_root.bin`，普通下载清单不包含这个文件系统镜像。
 
-### 动态应用构建
+LCD DevKit 使用：
 
-完成平台构建后，可以单独、批量或全部构建动态应用：
+```powershell
+scons -C project --board=sf32lb57-lcd-gyd7n6_epd_hcpu --board_search_path=../boards -j8
+```
+
+载板映射见 [LCD DevKit 说明](boards/sf32lb57-lcd-gyd7n6_epd/README.md)。
+
+### 动态应用
+
+已有配套平台后，可以单个、批量或全部构建：
 
 ```powershell
 scons -C modules APPS=weather -j8
@@ -45,274 +57,54 @@ scons -C modules APPS=books,gallery -j8
 scons -C modules APPS=all -j8
 ```
 
-`APPS` 支持 `weather`、`books`、`gallery`、`words`，多个应用 ID 用逗号分隔；`all` 选择全部正式应用。
-应用构建读取已有平台固件及其配置，不重新编译平台。
-动态应用安装包输出到 `project/build_<board>/app-resources/<应用ID>/`。
-设备可以按需安装应用，也可以不安装任何动态应用。
+`APPS` 支持 `weather,books,gallery,words,weread,board`。默认使用 DPI 板固件；
+为 LCD 板构建时增加 `FIRMWARE=build_sf32lb57-lcd-gyd7n6_epd_hcpu`。
+完整安装包位于 `project/build_<board>/app-resources/<id>/`。
+平台配置变化后需要配套重编应用，不要单独复制 `.so`。
 
-选择构建 `words` 时，需要 Node.js、`sharp`、词库 `.wdb` 及对应的 `.wdb.json` 报告，
-准备方法见 [单词应用](modules/words/README.md)。
+单词应用的全量预生成词库已纳入 Git；构建自动解压，不重新下载原始数据。
+图标生成需要 Node.js 和 `sharp`，准备方法见 [单词应用](modules/words/README.md)。
 
-也可以在一次命令中构建平台和指定应用：
+### 工厂预装
 
-```powershell
-scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu APPS=weather,books -j8
-```
-
-### 工厂预装与烧录
-
-通过 `PREINSTALL` 选择写入出厂文件系统的应用，通过 `STORAGE_IMAGE=1` 将文件系统镜像加入下载清单：
+一次构建平台、天气和书架，并把两个完整包放入出厂文件系统：
 
 ```powershell
 scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu PREINSTALL=weather,books STORAGE_IMAGE=1 -j8
 ```
 
-构建自动编译所选预装应用，将完整安装包写入 `fs_root.bin`。
-普通平台构建默认不预装应用，普通下载清单不包含文件系统镜像。
-烧录 `fs_root.bin` 会覆盖内部文件系统已有内容。
+不必先执行一遍 `APPS=weather,books`。烧录入口为同一构建目录中的
+`uart_download.bat` 或 SDK 生成的其他下载脚本。
+`STORAGE_IMAGE=1` 会将 `fs_root.bin` 加入下载清单；烧录它会覆盖内部文件系统。
+保留用户数据的普通固件更新不使用此选项。
 
-在仓库根目录运行生成的下载脚本：
+## 应用与公共组件
 
-```powershell
-project\build_dpi-hdk_lb57gyd7n6_epd_hcpu\uart_download.bat
-```
+| 应用 | 功能 | 设计文档 |
+| --- | --- | --- |
+| weather | 天气、城市历史、独立后台同步 | [设计](modules/weather/DESIGN.md) |
+| books | TXT、MD、EPUB、MOBI 阅读与进度 | [设计](modules/books/DESIGN.md) |
+| gallery | PNG/JPEG 等比显示与 16 灰阶处理 | [设计](modules/gallery/DESIGN.md) |
+| words | 统一离线词库、学习范围和 FSRS-6 复习 | [设计](modules/words/DESIGN.md) |
+| weread | 登录、在线书架、章节缓存和阅读 | [设计](modules/weread/DESIGN.md) |
+| board | 配置式信息卡片与公共摘要 | [模板与预览](docs/BOARD_TEMPLATES.md) |
+| hello | 页面导航与受管服务开发示例 | [设计](modules/hello/DESIGN.md) |
 
-固件选择、应用构建依赖、预装列表和存储迁移参数见 [平台与应用构建](docs/BUILDING.md)。
+公共 HTTP、图片和阅读视图源码位于 `modules/common/`。
+动态应用通过 app_fwk 管理页面，通过平台接口使用存储、网络、字体与受管后台服务。
+主固件不负责各应用的城市、词条或书籍业务规则。
 
-## 目录结构
-```
-├── project/                       # SCons 构建工程
-│   ├── SConstruct / SConscript
-│   ├── Kconfig / Kconfig.proj     # 屏驱与工程配置
-│   ├── proj.conf                  # 全局工程配置（含 LVGL 配置）
-│   └── dpi-hdk_lb57gyd7n6_epd_hcpu/   # 板卡专属配置（proj.conf/ptab/link）
-├── src/                           # 应用代码（分层：ui / services / boards）
-│   ├── main.c                     # LVGL v9 显示、数据服务初始化与主界面事件循环
-│   ├── ui/                        # Launcher、页面导航、状态模型和图标
-│   ├── services/                  # 【数据服务层】提供数据接口给 UI
-│   │   ├── net/bt_pan.c|h         # 蓝牙 PAN 联网（手机热点共享）
-│   │   ├── weather/weather.c|h    # 天气数据（快照/状态/事件）
-│   │   ├── bookshelf/bookshelf.c|h  # 书库管理（卡根目录扫描）
-│   │   ├── reader/reader.c|h      # 阅读引擎（按偏移取文本/进度）
-│   │   └── service_cmd.c          # msh 调试命令（svc，验证各接口返回）
-│   └── boards/
-│       ├── (EPD 屏驱+波形已迁至 SDK customer/peripherals/display/epd_e0470a03，见“依赖”)
-│       ├── touch/gt967/           # GT967 触摸驱动
-│       ├── battery/               # 电量计
-│       ├── controls/              # 按键（KEY1/2/3）
-│       └── board_service.c/.h     # 文件系统和电源管理
-├── assets/icons/                  # SVG 图标源文件
-├── assets/ezip/                   # 固定尺寸透明 PNG，构建时转换为 EZIP
-├── assets/SConscript              # SDK EZIP 资源生成与编译
-├── tools/generate_ui_icons.cjs    # SVG → 灰阶透明 PNG
-├── font/                          # 内置中文字体（MiSans Normal，供 Tiny TTF）
-├── disk/                          # 内置文件系统镜像内容
-└── RT-Thread + LVGL 墨水屏 Demo 软件需求.html
-```
+## 存储、显示与诊断
 
-## 数据服务接口（给 UI）
-- 蓝牙 PAN：`src/services/net/bt_pan.h` —— 状态查询 / 开关 / 事件
-- 天气：`src/services/weather/weather.h` —— 异步任务 / 数据快照 / 配置 / 城市校验
-- 书库：`src/services/bookshelf/bookshelf.h` —— 扫描 / 列表 / 进度
-- 阅读：`src/services/reader/reader.h` —— 打开 / 按偏移取文本 / 阅读位置
-- 用法示例与线程约定：`src/services/README.md`
-- 串口验证命令：`svc <service> <sub-command>`（直接输入 `svc` 查看全部）
+应用安装在内部存储或 TF 卡，业务数据和缓存跟随安装位置。TF 卡移除会触发会话失效与协作退出；
+再次插入后通过加载确认启用卡内应用。安装及迁移规则见 [应用开发](docs/APPLICATION_DEVELOPMENT.md)。
 
-## 开发状态
-- [x] 新屏驱动与波形合入（来自 PR#39）
-- [x] 板卡工程配置（dpi-hdk_lb57gyd7n6_epd_hcpu）
-- [x] 板级服务（按键/触摸/电池/电源）
-- [x] 纯 C 化（移除 C++ 抽象层）
-- [x] 数据服务层：蓝牙 PAN 联网 + 天气接口框架
-- [x] 数据服务层：书库（bookshelf）+ 阅读（reader）接口框架
-- [x] msh 调试命令 `svc`（接口数据串口自验）
-- [ ] 手机蓝牙 PAN 真机联调（天气全链路验证）
-- [x] LVGL v9.4.0 显示适配、内置中文 TTF 字体和主界面
-- [x] 有界页面栈、按键/触摸导航、返回时恢复焦点
-- [x] 锁屏界面及 KEY2 / 触摸解锁
-- [x] 书架、天气、文件传输、相册、Wi-Fi 配网、设置入口及返回承载页
-- [x] 天气详情、三天预报及顶部返回入口
-- [x] 书架卡片、阅读进度、分页边界和选书入口
-- [x] 通用设置开关、循环选项和文本设置界面
-- [ ] 子页面业务内容、设置后端和低功耗状态机
+页面切换触发全刷并重置周期计数；同页内容更新保留全刷周期；状态栏小范围自动更新不累计周期。
+应用不控制扫描时序或波形。字体采用内置 MiSans，压缩资源启动解压至 PSRAM，字形像素按需缓存。
 
-## 主界面
+动态模块共享系统地址空间。故障定位使用精确符号与模块地址，见
+[动态应用故障取证](docs/DYNAMIC_APP_DEBUGGING.md)；问题应用的停用与恢复见
+[恢复操作](docs/RECOVERY.md)。
 
-主界面采用 684×1216 竖屏布局，包含日期时间、无线状态、电量、
-六个页面入口、最近阅读/天气/电量快捷信息和锁屏按钮。
-KEY1 上选、KEY3 下选、KEY2 确认，长按 KEY1 返回上一级。
-所有页面均不显示底部按键操作提示。子页面在标题行左侧提供返回图标，
-支持触摸或按键选中后返回上一页，不使用底部大返回或主页面按钮。
-锁屏标题为 `SiFli EPD DEMO`，不显示电量，仅保留小 KEY2 图标作为解锁入口；
-按 KEY2 或触摸该图标退出锁屏，不执行硬件休眠或关机。
-
-页面切换使用 LVGL v9 的即时屏幕加载，删除上一页对象树，
-在最多 8 层的页面栈中保存页面编号和焦点位置；不使用滑动动画。
-设置页支持通用设置和文本设置，保留关于设备入口；天气页显示天气详情，
-书架页通过书籍卡片打开 TXT 正文。Wi-Fi 配网页面只保留提示和返回按钮。
-
-状态栏的蓝牙/Wi-Fi 图标在关闭时隐藏；开启后分别使用未连接和已连接图标。
-蓝牙状态来自 `btpan_get_state()`；关闭时隐藏图标，
-初始化或未连接时显示未连接图标，链路已连接或 PAN 已连通时显示已连接图标。
-Wi-Fi 服务通过 `ui_app_set_wifi(enabled, connected)` 上报状态；
-当前板卡工程未接入 Wi-Fi 驱动，默认关闭。
-最近阅读和天气摘要分别通过 `ui_app_set_recent_reading()`、
-`ui_app_set_weather_summary()` 更新；没有缓存时显示空状态，天气服务独立处理定时请求。
-日期时间读取系统 RTC；RTC 时间未设置时显示占位文本。状态栏日期时间和电量百分比使用 28 px 字体。
-
-电量 0–20% 使用空电池图标，21–79% 使用中段图标，80–100% 使用满电图标，
-充电状态优先使用充电图标。负值或未知电量按 0% 处理。
-SF32LB57X 的电池采集接口目前返回占位值 0，因此默认显示空电池和 0%。
-
-图标使用编译进资源分区的 EZIP 压缩数据，通过 SDK 的 EZIP/EPIC 通路显示，不依赖 TF 卡。
-PNG 源图片在构建时转换；工程启用 `LV_USE_EZIP`，关闭 `LV_USE_LODEPNG`，
-当前不通过 LodePNG 读取文件系统中的原始 PNG。
-内置 `MiSans-Normal.ttf` 在构建时以 zlib 整包无损压缩，资源分区仅保存压缩数据。
-启动创建系统字体时，miniz 将字体完整解压到 RAM1（PSRAM），校验成功后供 Tiny TTF 使用。
-系统各字号与阅读字体共用一份完整数据，计入系统内存占用，
-不随应用退出而释放。完整字体占用 8,201,144 字节（约 7.82 MiB），无需依赖 TF 卡。
-原始 TTF 的内容校验值参与阅读分页缓存标识，压缩不改变缓存标识；替换字体内容后按保存的字节位置重新分页。
-字号为 20、24、28、36、64 像素，每个字号的字形缓存限制为 32 项；
-64 像素字体用于天气温度，20 像素字体用于详情标题和辅助信息。
-字体解析和缓存管理结构通过 LVGL 分配器使用 2 MiB 专用 PSRAM 堆；
-完整字体和字形位图通过项目分配器使用 11 MiB 的共享 PSRAM 堆
-（`IMAGE_CACHE_IN_PSRAM_SIZE` / `TINY_TTF_CACHE_IN_APP_PSRAM`），与动态应用和图片共享容量。
-阅读字形缓存继续按剩余空间动态分配；完整 TTF 数据不等于预先生成的字形位图缓存。
-工程已启用 Tiny TTF 文件加载接口；主界面直接使用内置字体，不依赖 TF 卡。
-文件读取缓存为每个打开的文件 4 KiB，使用 LVGL 分配器。
-LVGL 输出警告及错误日志，并启用空指针、分配失败和样式初始化断言；
-RT-Thread 开启线程栈溢出检查。
-LVGL 的两个 40 行绘制缓冲区放在 PSRAM，合计 109440 字节，
-为系统堆留出 SRAM；主线程和 LVGL 绘制线程各保留 32 KiB 栈。
-
-### 天气页面
-
-天气页按 684×1216 竖屏分为城市与更新时间、当前天气、详情卡片和三天预报。
-返回图标位于城市位置图标左侧；底部提供“更新”按钮，城市设置位于设置页面。
-详情卡片为两列四行，显示湿度、风速、能见度、云量、日出、日落、气压和空气质量；
-底部保留数据来源和区域。内容使用纵向弹性布局，将剩余高度均匀分配到各区块之间，
-图标和文字保持固定尺寸，不使用动画或渐变。
-页面通过蓝牙 PAN 直连和风天气，不需要上位机转发。开机先显示 NOR 缓存，
-配置和城市有效且 PAN 网卡取得 IP 和网关后进行一次静默同步，断线重连后补发，
-并保留固定 30 分钟更新周期。同步失败后保留待同步任务，失败结束后间隔 5 秒重试；
-离线期间暂停请求，联网后继续。单个 HTTP 请求的失败重试间隔同样为 5 秒。
-后台请求不弹窗，主页快捷信息与天气页使用同一份天气结果，只更新实际变化的字段；缺失数据使用 `--`。
-点击“更新”显示“正在同步”，失败显示“同步失败，请重试”，成功显示“同步成功”，
-面板完成显示后停留一秒再关闭。实况和未来三天必须一起获取并保存成功，才报告同步成功；
-空气质量接口不可用时不阻断其他天气数据，空气卡片显示 `--`。
-
-#### 天气配置与城市
-
-1. 复制 `docs/qweather.example.json` 为 TF 卡根目录的 `qweather.json`，填入自己的
-   `api_key` 和 `api_host`。JSON 仅包含这两个字符串字段；Host 使用控制台分配的专属域名，
-   可以带 `https://` 前缀，不包含 API 路径。不要将真实凭据加入代码仓库。
-2. 在手机上开启蓝牙网络共享，与 `RT-EPD-Reader` 配对连接。
-3. 进入“设置 → 天气设置 → 从 TF 卡导入天气配置”。导入只在手动操作时进行。
-4. 进入“天气城市ID”，扫码打开和风官方城市列表，点击“我已获取城市ID”，
-   用数字键盘输入 LocationID。设备通过 GeoAPI 校验，匹配到对应城市且保存成功后，
-   显示城市名称和“设置成功”，随后自动回到设置页面。数字键盘仅支持数字 ID。
-
-配置、城市历史和天气快照分别保存在天气应用安装卷的 `data/weather/` 与 `cache/weather/`，
-使用文件系统记录，不再占用独立天气分区。内部路径以 `/flash` 开头，TF 卡路径以 `/sdcard/.epd` 开头。
-卡内应用的数据与应用随卡携带，插卡并确认加载后恢复；内部应用的配置不依赖 TF 卡。
-安装位置、迁移和热插拔规则见 [应用开发](docs/APPLICATION_DEVELOPMENT.md)。
-
-接口与线程约定见 `src/services/README.md`。
-
-`assets/weather/` 包含 SuperKey 中完整的 70 个天气 PNG。
-`ui_weather_icon()` 按和风天气代码查询，缺失代码回退到 `999`；
-160×160 大图及 48×48 小图先生成近黑色 `#111111`、带 16 级边缘透明度的 PNG，再由 SDK 转换为 EZIP，
-编译到资源分区。不需要运行时 PNG 解码、图像缩放或从 TF 卡加载。
-
-### 书架页面
-
-书架采用每页 4 张卡片的纵向布局，显示书籍封面图标、TXT 文件名、大小、
-最近阅读时间、灰阶进度条和当前页/总页数；未读书籍显示“未读”。
-书目来自当前挂载文件系统的根目录，支持 TF 卡或内置 NOR 中的 `.txt` 文件。
-扫描上限为 32 本，按书名排序；文件名去掉后缀显示。
-
-KEY1/KEY3 选择书籍，KEY2 或触摸卡片打开正文，返回时恢复书架页和焦点。
-有书籍时底部保留“上一页、下一页”，边界按钮置灰且跳过按键焦点。
-不显示选书按键说明及书籍总数提示行。空书库或存储不可用时，内容区仅显示
-“这里空空如也~”，不显示分页按钮；重新进入书架时重新扫描。
-
-### TXT 阅读
-
-支持 UTF-8（含 BOM）和 GBK，自动检测，也可在文本设置里指定编码。
-按原文件字节偏移保存位置，转码后仍能准确关联到原文；CRLF/CR 统一为换行，
-分页使用与显示相同的 LVGL 字体度量，避免切断多字节汉字。
-
-KEY1 上一页、KEY3 下一页、KEY2 返回书架，长按 KEY1 打开阅读设置。
-触摸正文左侧翻到上一页、右侧翻到下一页、中间打开设置。
-设置面板支持触摸翻页开关、全刷周期、±1/±5 调整目标页、确认跳转和文本设置入口。
-字体、字号、字重、行距、边距或编码改变后按原文位置重新分页；字体从 `/fonts/Song.ttf`、`Hei.ttf`、
-`Kai.ttf`、`Monospace.ttf` 加载，文件缺失时回退到内置 MiSans Normal。
-
-阅读页保留返回图标和书名，顶部压缩为 64 px 标题栏，正文为 y=64 至 y=1151。
-底部显示细进度条，信息栏左侧为“电量：xx%”，中间为页码和阅读进度，右侧为 `HH:mm`，不带日期。
-页面高度参与分页缓存校验，正文区域调整后按原文件位置重建分页并恢复进度。
-阅读页只在内容或操作状态变化时更新正文与页脚；电量和时间随翻页、打开或关闭阅读菜单更新，
-不因定时状态采样单独刷新屏幕。不显示按键提示，不使用动画或渐变。
-普通翻页沿用局刷及周期全刷；打开/退出阅读页、阅读与文本设置页面切换时请求一次全刷。
-屏幕刷新期间继续记录按键；连续方向操作合并为最终选项或目标页，空闲后只更新一次，
-不逐个显示中间选项或书页。确认、返回按输入顺序独立处理，不跨越这些操作合并方向键。
-首尾页不循环，也不因越界按键触发刷新。
-
-首次打开时分批计算页码，总页数未完成时显示 `--`，不会为计算进度持续刷新屏幕；
-分页完成且屏幕空闲时，仅更新一次底栏页码文字，不触发正文、进度条、电量或时间更新。
-分页索引缓存以文件路径、大小、修改时间
-和排版参数校验，支持最多 65536 页，不将整本书加载到内存。
-当前页起点、百分比和最近阅读时间保存在书架应用安装卷的 `data/books/` 中，
-翻页先更新内存进度，后台保存两份交替记录之一；正常退出时同步待保存记录。
-分页索引位于同卷的 `cache/books/`。写入失败时保留内存进度并在页脚提示。
-重新打开书籍会恢复位置；最后一页记为 100%，空文件保持 0%。
-
-### 设置页面
-
-通用设置包含触控开关、超时关机、全刷周期、蓝牙、Wi-Fi、默认网络和低功耗模式，
-并提供文本设置、关于设备入口。无已保存配置时，触控、Wi-Fi 和低功耗控件默认开启，
-蓝牙开关跟随 PAN 服务的实际启用状态（默认开启），
-超时为 5 分钟，全刷周期为 10 次，默认网络为 WiFi。
-
-文本设置提供字体、字号、字重、行距、边距和文件编码；
-默认值分别为 Default、24 px、正常、1.2x、8 px 和自动识别编码。
-KEY1/KEY3 选择设置行，KEY2 或触摸整行切换开关或循环到下一选项。
-开关位置和选项文字即时更新，不使用动画；进入子页面再返回时恢复原焦点。
-
-全刷周期由 `epd_wave_set_part_times()` 控制，设置页与阅读菜单使用同一接口；
-修改周期或完成一次全刷后重新计数，默认每 10 次实际刷新进行一次全刷。
-选择“每次”后每次都全刷。界面空闲时不主动刷新，修改周期不改变波形内容。
-波形发送结束后立即通知刷新完成；连续刷新保持面板供电，最后一次刷新完成后空闲
-300 毫秒再开始断电。断电期间的新刷新等待完整关断后再上电；显式关闭屏幕或让屏幕
-进入休眠时立即执行断电流程。上电和断电时序的等待时间保持不变。
-
-蓝牙开关调用 `btpan_enable()`，由 PAN 工作线程应用：关闭可发现和可连接状态、
-停止自动重连、断开 PAN 及手机链路；重新开启后恢复可发现和可连接状态。
-开关与状态栏回读同一服务状态。此开关不切断蓝牙控制器电源。
-
-文本选项应用于阅读正文；从阅读菜单修改后返回阅读页时重建排版，保留原文位置。
-正常、粗体、细体分别使用原始字形及项目侧的合成字重处理；粗体增加的字宽同时用于分页。
-字形位图只处理一次并写回 PSRAM，保留 Tiny TTF 缓存及 GPU 渲染。
-触控开关控制阅读区域的触摸翻页。自动关机、Wi-Fi、默认网络和低功耗仍为预留控件。
-
-通用和文本设置页的“保存设置”将当前选择写入独立 NOR 区域
-`0x121C0000–0x121C1FFF`；两个 4 KiB 扇区交替写入，校验通过后才提交新记录，
-不会覆盖天气配置。重启时恢复最后一次有效保存；未保存的更改仅在本次运行有效。
-保存失败会显示失败提示，相同配置不重复擦写。顶部返回图标返回上一级，不自动保存。
-
-### 资源生成
-
-图标源文件位于 `assets/icons/`；其中相册图标为配套的线性矢量图。
-安装 Node.js 的 `sharp` 模块后运行 `node tools/generate_ui_icons.cjs`，
-生成 `assets/ezip/icons/` 下的固定尺寸透明 PNG 和图标声明。
-天气图标使用 `node tools/generate_weather_icons.cjs` 生成 `assets/ezip/weather/` 中的
-大小两套 PNG 及天气代码查询表，来源与布局见 `assets/weather/README.md`。
-这些 PNG 输入文件随工程提供，普通固件构建不需要 Node.js；`assets/SConscript`
-使用 SDK 的 `Env.ImgResource()` 自动转换为 LVGL v9 EZIP 资源。
-SF32LB57X 使用 2 KiB 压缩窗口，生成的 C 文件与目标文件位于构建目录，
-图像数据及描述符放入现有 ROM2 资源分区。
-
-## 开发规范
-- 屏幕分辨率宏：`LCD_HOR_RES_MAX=684`、`LCD_VER_RES_MAX=1216`（竖屏，与驱动旋转逻辑对应）
-- 波形模式（E0470A03）：`mode 0=GC16(全刷)`、`1=DU(局刷)`、`3=INIT`、`5=GL16`、`6=A2`、`7=DU4`
-- 全刷周期控制：`epd_wave_set_part_times(n)`；通过 `epd_wave_get_part_times()` 查询，`epd_wave_request_full()` 请求下一次全刷
+低功耗、离线 OTA、语音输入等尚未实施内容，统一在[技术储备](docs/TECHNICAL_RESERVES.md)中说明，
+不以设置占位项或方案文档作为功能已经完成的依据。
