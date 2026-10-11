@@ -1,5 +1,6 @@
 #include "ui_internal.h"
 #include "storage.h"
+#include "platform/app_content.h"
 #include <dfs_posix.h>
 #include <time.h>
 
@@ -15,6 +16,11 @@ typedef struct
     bool directories[FILE_ROWS];
     unsigned first, count;
     bool more;
+    bool choosing;
+    char selected[STORAGE_PATH_MAX];
+    app_content_handler_t handlers[FILE_ROWS];
+    unsigned handler_first;
+    uint32_t card_session;
     lv_obj_t *rows[FILE_ROWS], *labels[FILE_ROWS], *details[FILE_ROWS];
     lv_obj_t *breadcrumb, *empty, *previous, *next;
 } files_view_t;
@@ -26,7 +32,33 @@ static void files_render(void)
     view->count = 0;
     view->more = false;
     text_update(view->empty, "这里空空如也~");
-    if (!view->path[0])
+    if (view->choosing)
+    {
+        unsigned total = 0;
+        rt_err_t result = app_content_query(view->selected, view->handler_first,
+                                            view->handlers, FILE_ROWS, &total);
+        if (!strcmp(storage_path_root(view->selected), STORAGE_SD_ROOT) &&
+            !storage_session_valid(STORAGE_SD, view->card_session)) result = -RT_EIO;
+        if (result == RT_EOK && view->handler_first && view->handler_first >= total)
+        {
+            view->handler_first = 0;
+            result = app_content_query(view->selected, 0, view->handlers, FILE_ROWS, &total);
+        }
+        text_update(view->breadcrumb, "选择打开应用");
+        text_update(view->empty, result != RT_EOK ? app_content_error(result) : "没有可用的处理应用");
+        if (result == RT_EOK)
+        {
+            view->count = total - view->handler_first;
+            if (view->count > FILE_ROWS) view->count = FILE_ROWS;
+            view->more = total - view->handler_first > view->count;
+            for (unsigned i = 0; i < view->count; ++i)
+            {
+                text_update(view->labels[i], view->handlers[i].name);
+                text_update(view->details[i], view->handlers[i].id);
+            }
+        }
+    }
+    else if (!view->path[0])
     {
         text_update(view->breadcrumb, "");
         for (unsigned i = 0; i < STORAGE_COUNT; ++i)
@@ -80,7 +112,7 @@ static void files_render(void)
     }
     for (unsigned i = 0; i < FILE_ROWS; ++i) object_visible(view->rows[i], i < view->count);
     object_visible(view->empty, !view->count);
-    object_visible(view->previous, view->path[0] && view->first);
+    object_visible(view->previous, view->choosing ? view->handler_first != 0 : view->path[0] && view->first);
     object_visible(view->next, view->more);
 }
 
@@ -88,6 +120,7 @@ void files_resume(void) { files_render(); }
 void files_storage_changed(void)
 {
     files_view_t *view = current->feature;
+    if (view) view->choosing = false;
     if (view && view->path[0] && !strcmp(storage_path_root(view->path), STORAGE_SD_ROOT))
     {
         snprintf(view->path, sizeof(view->path), "%s", STORAGE_SD_ROOT);
@@ -124,6 +157,25 @@ bool files_action(int *target)
     files_view_t *view = current->feature;
     if (!view) return false;
     if (*target == NAV_BACK && current->popup) { popup_close(); return true; }
+    if (view->choosing)
+    {
+        if (*target == NAV_BACK) view->choosing = false;
+        else if (*target == FILE_PREVIOUS && view->handler_first) view->handler_first -= FILE_ROWS;
+        else if (*target == FILE_NEXT && view->more) view->handler_first += FILE_ROWS;
+        else if (*target >= FILE_ROW_BASE && *target < FILE_ROW_BASE + (int)view->count)
+        {
+            unsigned row = *target - FILE_ROW_BASE;
+            rt_err_t result = !strcmp(storage_path_root(view->selected), STORAGE_SD_ROOT) &&
+                              !storage_session_valid(STORAGE_SD, view->card_session) ? -RT_EIO :
+                              app_content_open(view->handlers[row].id, view->selected);
+            if (result != RT_EOK) { popup_open(app_content_error(result), NULL); return true; }
+            view->choosing = false;
+        }
+        else return false;
+        files_render();
+        focus_restore(0);
+        return true;
+    }
     if (*target == NAV_BACK && view->path[0])
     {
         char *slash = strrchr(view->path, '/');
@@ -149,7 +201,26 @@ bool files_action(int *target)
         }
         else
         {
-            popup_open(view->names[i], lv_label_get_text(view->details[i]));
+            int n = snprintf(view->selected, sizeof(view->selected), "%s/%s", view->path, view->names[i]);
+            if (n <= 0 || (size_t)n >= sizeof(view->selected))
+            { popup_open("路径过长", NULL); return true; }
+            unsigned total;
+            view->card_session = storage_card_session();
+            rt_err_t result = app_content_query(view->selected, 0, view->handlers, FILE_ROWS, &total);
+            if (result != RT_EOK) popup_open(app_content_error(result), NULL);
+            else if (!total) popup_open(view->names[i], lv_label_get_text(view->details[i]));
+            else if (total == 1)
+            {
+                result = app_content_open(view->handlers[0].id, view->selected);
+                if (result != RT_EOK) popup_open(app_content_error(result), NULL);
+            }
+            else
+            {
+                view->choosing = true;
+                view->handler_first = 0;
+                files_render();
+                focus_restore(0);
+            }
             return true;
         }
         view->first = 0;

@@ -28,16 +28,20 @@ bool gallery_decode(const gallery_job_t *job, gallery_decoder_t *decoder, galler
     if (!raster_io_open(decoder)) return false;
     if (gallery_cache_load(decoder, result)) return true;
     rt_tick_t start = rt_tick_get();
+    rt_tick_t read_start = decoder->read_ticks, crc_start = decoder->source_crc_ticks;
+    unsigned calls_start = decoder->read_calls;
     bool ok = raster_decode(decoder) && gallery_fingerprint(decoder);
     storage_lock();
     close(decoder->fd);
     storage_unlock();
     decoder->fd = -1;
-    if (ok) rt_kprintf("[gallery] %ux%u -> %ux%u, decode %u ms, read %u ms/%u calls, RAM0 peak %u\n",
+    if (ok) rt_kprintf("[gallery] %ux%u -> %ux%u, decode %u ms, read %u ms/%u calls, source_crc %u ms, RAM0 peak %u\n",
         decoder->source_width, decoder->source_height, decoder->width, decoder->height,
-        (unsigned)((rt_tick_get() - start) * 1000u / RT_TICK_PER_SECOND),
-        (unsigned)(decoder->read_ticks * 1000u / RT_TICK_PER_SECOND),
-        decoder->read_calls, (unsigned)decoder->fast_peak);
+        (unsigned)((uint64_t)(rt_tick_get() - start) * 1000 / RT_TICK_PER_SECOND),
+        (unsigned)((uint64_t)(decoder->read_ticks - read_start) * 1000 / RT_TICK_PER_SECOND),
+        decoder->read_calls - calls_start,
+        (unsigned)((uint64_t)(decoder->source_crc_ticks - crc_start) * 1000 / RT_TICK_PER_SECOND),
+        (unsigned)decoder->fast_peak);
     return ok;
 }
 

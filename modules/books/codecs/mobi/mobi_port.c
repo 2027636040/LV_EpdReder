@@ -28,6 +28,78 @@ static unsigned char *read_ahead;
 static size_t read_start, read_size;
 static unsigned read_calls, read_bytes;
 static rt_tick_t started;
+#if BOOK_MOBI_MEASURE
+typedef struct {
+    uint64_t decode_calls, decode_ticks, read_calls, read_bytes, read_ticks, lock_ticks;
+} measurement_t;
+static measurement_t measurements[3];
+static unsigned measure_phase;
+
+void mobi_port_measure_phase(unsigned phase)
+{
+    if (phase < sizeof(measurements) / sizeof(measurements[0])) measure_phase = phase;
+}
+static uint64_t ticks_ms(uint64_t ticks)
+{
+    return ticks * 1000 / RT_TICK_PER_SECOND;
+}
+static const char *measure_decimal(char buffer[21], uint64_t value)
+{
+    char *end = buffer + 20;
+    *end = 0;
+    do {
+        *--end = (char)('0' + value % 10);
+        value /= 10;
+    } while (value);
+    return end;
+}
+void mobi_port_measure_report(void)
+{
+    unsigned i;
+    for (i = 0; i < sizeof(measurements) / sizeof(measurements[0]); ++i) {
+        const measurement_t *m = &measurements[i];
+        char values[6][21];
+        /* Keep 64-bit counters even with a console printf lacking long long. */
+        rt_kprintf("[mobi] measure phase=%u decode_calls=%s decode_ms=%s "
+                   "read_calls=%s read_bytes=%s read_ms=%s lock_wait_ms=%s\n",
+                   i, measure_decimal(values[0], m->decode_calls),
+                   measure_decimal(values[1], ticks_ms(m->decode_ticks)),
+                   measure_decimal(values[2], m->read_calls), measure_decimal(values[3], m->read_bytes),
+                   measure_decimal(values[4], ticks_ms(m->read_ticks)),
+                   measure_decimal(values[5], ticks_ms(m->lock_ticks)));
+    }
+}
+MOBI_RET mobi_measure_lz77(unsigned char *out, const unsigned char *in,
+                         size_t *len_out, size_t len_in)
+{
+    rt_tick_t begin = rt_tick_get();
+    MOBI_RET result = mobi_decompress_lz77(out, in, len_out, len_in);
+    ++measurements[measure_phase].decode_calls;
+    measurements[measure_phase].decode_ticks += (rt_tick_t)(rt_tick_get() - begin);
+    return result;
+}
+MOBI_RET mobi_measure_huffman(unsigned char *out, const unsigned char *in,
+                            size_t *len_out, size_t len_in, const MOBIHuffCdic *dictionary)
+{
+    rt_tick_t begin = rt_tick_get();
+    MOBI_RET result = mobi_decompress_huffman(out, in, len_out, len_in, dictionary);
+    ++measurements[measure_phase].decode_calls;
+    measurements[measure_phase].decode_ticks += (rt_tick_t)(rt_tick_get() - begin);
+    return result;
+}
+static int measured_read(struct dfs_fd *file, void *buffer, size_t size)
+{
+    rt_tick_t begin = rt_tick_get();
+    int result = dfs_file_read(file, buffer, size);
+    measurement_t *m = &measurements[measure_phase];
+    ++m->read_calls;
+    if (result > 0) m->read_bytes += (unsigned)result;
+    m->read_ticks += (rt_tick_t)(rt_tick_get() - begin);
+    return result;
+}
+#else
+#define measured_read dfs_file_read
+#endif
 
 int mobi_port_start(const book_allocator_t *allocator, const book_sink_t *sink)
 {
@@ -39,6 +111,10 @@ int mobi_port_start(const book_allocator_t *allocator, const book_sink_t *sink)
     read_ahead = NULL;
     read_start = read_size = 0;
     read_calls = read_bytes = 0;
+#if BOOK_MOBI_MEASURE
+    memset(measurements, 0, sizeof(measurements));
+    measure_phase = 0;
+#endif
     started = rt_tick_get();
     storage_lock();
     media_revision = storage_revision();
@@ -54,8 +130,17 @@ int mobi_port_status(void)
 }
 static int io_begin(void)
 {
+#if BOOK_MOBI_MEASURE
+    rt_tick_t begin;
+#endif
     if (mobi_port_status() != BOOK_OK) return -1;
+#if BOOK_MOBI_MEASURE
+    begin = rt_tick_get();
+#endif
     storage_lock();
+#if BOOK_MOBI_MEASURE
+    measurements[measure_phase].lock_ticks += (rt_tick_t)(rt_tick_get() - begin);
+#endif
     if (storage_changing() || storage_revision() != media_revision) {
         status = BOOK_IO_ERROR;
         storage_unlock();
@@ -103,7 +188,7 @@ int mobi_read_at(const char *path, size_t offset, void *buffer, size_t size)
             size_t length = (size_t)source_file.size - start;
             if (length > READ_AHEAD_SIZE) length = READ_AHEAD_SIZE;
             if (dfs_file_lseek(&source_file, (long)start) < 0 ||
-                dfs_file_read(&source_file, read_ahead, length) != (int)length) {
+                measured_read(&source_file, read_ahead, length) != (int)length) {
                 status = BOOK_IO_ERROR;
                 storage_unlock();
                 return status;
@@ -203,7 +288,7 @@ int mobi_dfs_read(struct dfs_fd *file, void *buffer, size_t size)
 {
     int result;
     if (io_begin()) return -1;
-    result = dfs_file_read(file, buffer, size);
+    result = measured_read(file, buffer, size);
     storage_unlock();
     if (result < 0 || (size_t)result != size) status = BOOK_IO_ERROR;
     return result;

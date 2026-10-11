@@ -3,6 +3,28 @@
 #define BOOK_MOBI_PORT_H
 #include <stddef.h>
 #include "book_codec.h"
+#ifndef BOOK_MOBI_MEASURE
+#define BOOK_MOBI_MEASURE 0
+#endif
+#if BOOK_MOBI_MEASURE
+#include "compression.h"
+/* Phase 0 is setup; phases 1 and 2 are the link scan and body conversion.
+ * Counts include failed calls. Timing uses the platform monotonic tick. */
+void mobi_port_measure_phase(unsigned phase);
+void mobi_port_measure_report(void);
+MOBI_RET mobi_measure_lz77(unsigned char *out, const unsigned char *in,
+                         size_t *len_out, size_t len_in);
+MOBI_RET mobi_measure_huffman(unsigned char *out, const unsigned char *in,
+                            size_t *len_out, size_t len_in, const MOBIHuffCdic *dictionary);
+/* Only the vendor util translation unit redirects decompressor calls. */
+#ifdef MOBI_MEASURE_DECOMPRESSION
+#define mobi_decompress_lz77 mobi_measure_lz77
+#define mobi_decompress_huffman mobi_measure_huffman
+#endif
+#else
+#define mobi_port_measure_phase(phase) ((void)0)
+#define mobi_port_measure_report() ((void)0)
+#endif
 struct dfs_fd;
 void *mobi_alloc(size_t size);
 void *mobi_calloc(size_t count, size_t size);

@@ -9,6 +9,8 @@ import types
 import unittest
 from unittest.mock import patch
 
+import check_release
+
 
 PACKAGE = Path(__file__).resolve().parents[1]
 SDK = Path(os.environ["SIFLI_SDK"]) if os.environ.get("SIFLI_SDK") else None
@@ -32,7 +34,8 @@ class PackageMetadataTests(unittest.TestCase):
         self.assertEqual(fields["license"], "LicenseRef-SiFli")
         self.assertEqual(fields["python_requires_extend"], "sf-pkg-base.SourceOnlyBase")
         self.assertEqual(fields["support_sdk_version"], "2.5.0")
-        self.assertNotIn("user", fields)
+        if any(name in fields for name in ("user", "url", "homepage")):
+            self.assertEqual(check_release.check(PACKAGE)["release_errors"], [])
         self.assertIn("LICENSE", fields["exports_sources"])
         self.assertIn("conandata.yml", fields["exports_sources"])
 

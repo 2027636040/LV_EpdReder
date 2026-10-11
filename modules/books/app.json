@@ -1,8 +1,9 @@
 {
   "abi": 1,
   "id": "books",
-  "version": 9,
+  "version": 10,
   "data_version": 1,
   "name": "书架",
-  "background": true
+  "background": true,
+  "file_extensions": ["txt", "md", "markdown", "epub", "mobi"]
 }

@@ -2,6 +2,7 @@
 #include "platform/app_catalog.h"
 #include "platform/app_installer.h"
 #include "platform/app_settings_registry.h"
+#include "platform/app_recovery.h"
 #include "storage.h"
 #include <dfs_posix.h>
 #include <dlmodule.h>
@@ -146,6 +147,8 @@ void app_list_process(void)
 
 static bool open_dynamic_settings(const char *id)
 {
+    rt_err_t policy = app_recovery_check_dynamic();
+    if (policy != RT_EOK) { rt_set_errno(policy); return false; }
     intent_t intent = intent_init(id);
     if (!intent) return false;
     intent_set_string(intent, "page", "settings");
@@ -199,6 +202,11 @@ bool app_list_action(int *target)
         if (current->id == UI_PAGE_APP_SETTINGS)
         {
             if (list->pages[row] < UI_PAGE_COUNT) { *target = list->pages[row]; return false; }
+            if (app_recovery_active())
+            {
+                popup_open("恢复模式下无法打开应用", "仍可安装或卸载应用");
+                return true;
+            }
             char id[GUI_APP_ID_MAX_LEN];
             snprintf(id, sizeof(id), "%s", list->entries[row].id);
             if (!open_dynamic_settings(id) && current && current->foreground)

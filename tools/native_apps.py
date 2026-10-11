@@ -111,12 +111,26 @@ def add_package(env, sdk, repo, app_id, inputs, rgb565=True, palette=None, resou
                       p.name in ('SConstruct', 'SConscript'))]
     module_inputs += [str(profile), str(build / 'epd_app_profile.h'), str(build / 'rtconfig.h'),
                       str(build / 'cconfig.h'), str(build / 'rtua.py'), __file__]
-    if app_id in ('books', 'gallery'):
-        module_inputs += [str(p) for directory in ('modules/common/image', 'modules/gallery/third_party')
+    shared = []
+    if app_id in ('books', 'gallery', 'weread'):
+        shared += ['modules/common/image']
+    if app_id in ('books', 'weread'):
+        shared += ['modules/common/reader']
+    if app_id in ('weather', 'weread'):
+        shared += ['modules/common/http']
+    if app_id == 'weread':
+        shared += ['modules/books/document', 'modules/books/formats', 'modules/books/image', 'modules/books/third_party']
+    if shared:
+        module_inputs += [str(p) for directory in shared
                           for p in sorted((repo / directory).rglob('*')) if p.is_file() and
                           (p.suffix in ('.c', '.h', '.py') or p.name == 'SConscript')]
-    module_node = env.Command([str(module)] + [str(path) for path in library_modules], module_inputs,
+    module_inputs += [str(sdk / 'tools/build/ua.py'), str(sdk / 'tools/build/building.py')]
+    compiled_outputs = [path for image in [module] + library_modules
+                        for path in (str(image), str(image) + '.nostrip')]
+    module_node = env.Command(compiled_outputs, module_inputs,
                               Action(compile_module, 'MODULE ' + app_id + '.so'))
+    # The child SCons owns these outputs. Keep them for its incremental checks.
+    env.Precious(module_node)
 
     def manifest(target, source, env):
         for compiled in [module] + library_modules:
@@ -132,7 +146,8 @@ def add_package(env, sdk, repo, app_id, inputs, rgb565=True, palette=None, resou
                     shutil.copyfile(image_root / name, destination)
             result = build_package(module_dir / 'app.json', module, profile, staged,
                                    resources if resources.exists() else None,
-                                   image_root / 'icon.ezip', library_modules)
+                                   image_root / 'icon.ezip' if 'icon.ezip' in inputs else None,
+                                   library_modules)
             # Replace this generated package, so removed codecs/assets cannot survive.
             previous = Path(temporary) / 'previous'
             if root.exists():
@@ -180,8 +195,8 @@ def add_books_package(env, sdk, repo, rgb565=True, palette=None):
         'licenses/libmobi-gpl3.txt': 'modules/books/third_party/libmobi/COPYING.GPL3',
         'licenses/libxml2.txt': 'modules/books/third_party/libxml2/Copyright',
         'licenses/miniz.txt': 'modules/books/LICENSE.miniz',
-        'licenses/libpng.txt': 'modules/gallery/third_party/libpng/LICENSE',
-        'licenses/zlib.txt': 'modules/gallery/third_party/zlib/LICENSE',
+        'licenses/libpng.txt': 'modules/common/image/third_party/libpng/LICENSE',
+        'licenses/zlib.txt': 'modules/common/image/third_party/zlib/LICENSE',
         'licenses/tjpgd.txt': 'modules/common/image/LICENSE.tjpgd',
     }
     return add_package(env, sdk, repo, 'books', inputs, rgb565, palette,
@@ -193,6 +208,22 @@ def add_gallery_package(env, sdk, repo, rgb565=True, palette=None):
     repo = Path(repo).resolve()
     inputs = {'icon.ezip': repo / 'assets/ezip/icons/ui_icon_album.png'}
     return add_package(env, sdk, repo, 'gallery', inputs, rgb565, palette)
+
+
+def add_weread_package(env, sdk, repo, rgb565=True, palette=None):
+    repo = Path(repo).resolve()
+    licenses = {
+        'licenses/reference.txt': 'modules/weread/LICENSE.reference',
+        'licenses/mbedtls.txt': 'modules/weread/client/private/LICENSE.mbedtls',
+        'licenses/libxml2.txt': 'modules/books/third_party/libxml2/Copyright',
+        'licenses/miniz.txt': 'modules/books/LICENSE.miniz',
+        'licenses/libpng.txt': 'modules/common/image/third_party/libpng/LICENSE',
+        'licenses/zlib.txt': 'modules/common/image/third_party/zlib/LICENSE',
+        'licenses/tjpgd.txt': 'modules/common/image/LICENSE.tjpgd',
+    }
+    return add_package(env, sdk, repo, 'weread',
+                       {'icon.ezip': repo / 'assets/ezip/icons/ui_icon_bookshelf.png'}, rgb565, palette,
+                       resources={name: repo / path for name, path in licenses.items()})
 
 
 def add_words_package(env, sdk, repo, rgb565=True, palette=None, dictionary=None):
@@ -239,5 +270,14 @@ def add_words_package(env, sdk, repo, rgb565=True, palette=None, dictionary=None
     return add_package(env, sdk, repo, 'words', {'icon.ezip': icon}, rgb565, palette, resources)
 
 
+def add_board_package(env, sdk, repo, rgb565=True, palette=None):
+    repo = Path(repo).resolve()
+    root = repo / 'modules/board/res'
+    resources = {path.relative_to(root).as_posix(): path
+                 for path in sorted(root.rglob('*')) if path.is_file()}
+    return add_package(env, sdk, repo, 'board', {}, rgb565, palette, resources)
+
+
 PACKAGE_BUILDERS = {'weather': add_weather_package, 'books': add_books_package,
-                    'gallery': add_gallery_package, 'words': add_words_package}
+                    'gallery': add_gallery_package, 'words': add_words_package,
+                    'weread': add_weread_package, 'board': add_board_package}

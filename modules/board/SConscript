@@ -1,0 +1,6 @@
+from building import *
+
+cwd = GetCurrentDir()
+objects = DefineGroup('board', ['app_main.c', 'board_model.c', 'board_store.c'], depend=[''],
+                      CPPPATH=[cwd], CPPDEFINES=['BUILD_DLMODULE', 'HAVE_CCONFIG_H'])
+Return('objects')

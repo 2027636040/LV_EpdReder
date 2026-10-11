@@ -1,6 +1,9 @@
 from building import *
+import os
 
 cwd = GetCurrentDir()
 objects = DefineGroup('weather', Glob('*.c'), depend=[''],
                       CPPPATH=[cwd], CPPDEFINES=['BUILD_DLMODULE', 'HAVE_CCONFIG_H'])
+objects += SConscript(os.path.join(cwd, '..', 'common', 'http', 'SConscript'),
+                      variant_dir=os.path.join(cwd, 'output', 'http'), duplicate=0)
 Return('objects')

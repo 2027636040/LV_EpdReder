@@ -7,10 +7,7 @@ GetCurrentEnv().Append(CCFLAGS=' -O2 -ffunction-sections -fdata-sections',
               os.path.join(cwd, 'exports.map'))
 objects = DefineGroup('books', Glob('*.c'), depend=[''],
                       CPPPATH=[cwd], CPPDEFINES=['BUILD_DLMODULE', 'HAVE_CCONFIG_H'])
-objects += DefineGroup('book_image', Glob('image/*.c'), depend=[''], CPPPATH=[cwd])
-objects += DefineGroup('book_document', Glob('document/*.c'), depend=[''], CPPPATH=[cwd])
-objects += SConscript(os.path.join(cwd, 'formats', 'SConscript'),
-                      variant_dir=os.path.join(cwd, 'output', 'formats'), duplicate=0)
-objects += SConscript(os.path.join(cwd, '..', 'common', 'image', 'SConscript'),
-                      variant_dir=os.path.join(cwd, 'output', 'image'), duplicate=0)
+objects += DefineGroup('book_document', Glob('document/document_view.c'), depend=[''], CPPPATH=[cwd])
+objects += SConscript(os.path.join(cwd, '..', 'common', 'reader', 'SConscript'),
+                      variant_dir=os.path.join(cwd, 'output', 'reader'), duplicate=0)
 Return('objects')

@@ -28,6 +28,7 @@ typedef struct
     uint32_t content_crc;
     size_t crc_end;
     rt_tick_t read_ticks;
+    rt_tick_t source_crc_ticks;
     unsigned read_calls;
     size_t fast_used, fast_peak;
     char error[96];
@@ -46,6 +47,8 @@ size_t raster_read_some(raster_decoder_t *decoder, void *data, size_t bytes);
 bool raster_seek(raster_decoder_t *decoder, size_t position);
 bool raster_fingerprint(raster_decoder_t *decoder);
 void *raster_fast_alloc(raster_decoder_t *decoder, size_t bytes);
+void *raster_fast_alloc_priority(raster_decoder_t *decoder, size_t bytes);
+bool raster_fast_is_sram(const void *pointer);
 void raster_fast_free(raster_decoder_t *decoder, void *pointer);
 void raster_fit(unsigned sw, unsigned sh, unsigned max_width, unsigned max_height,
                 unsigned *width, unsigned *height, bool enlarge);

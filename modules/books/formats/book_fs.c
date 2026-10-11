@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #define BF_RAW_STDIO
 #include "book_internal.h"
+#include <errno.h>
 #ifdef BOOK_FORMAT_TARGET
 #include "services/storage.h"
 #else
@@ -20,6 +21,28 @@ static uint32_t storage_revision(void)
     return 0;
 }
 #endif
+
+static book_file_observer_t file_observer;
+static void *file_observer_user;
+bool book_file_observer_begin(book_file_observer_t observer, void *user)
+{
+    if (!observer || file_observer) return false;
+    file_observer = observer;
+    file_observer_user = user;
+    return true;
+}
+void book_file_observer_end(void *user)
+{
+    if (file_observer && user == file_observer_user)
+    {
+        file_observer = NULL;
+        file_observer_user = NULL;
+    }
+}
+static void observe_file(const char *path, book_file_event_t event)
+{
+    if (file_observer) file_observer(file_observer_user, path, event);
+}
 
 struct bf_file_handle
 {
@@ -61,16 +84,21 @@ bf_FILE *bf_fopen(const char *path, const char *mode)
     bf_FILE *f = bf_alloc(sizeof(*f));
     int opened;
     if (!f)
+    {
+        observe_file(path, BOOK_FILE_UNAVAILABLE);
         return NULL;
+    }
     f->path = bf_strdup(path);
     f->pushback = -1;
     if (!f->path)
     {
+        observe_file(path, BOOK_FILE_UNAVAILABLE);
         bf_free(f);
         return NULL;
     }
     storage_lock();
     f->revision = storage_revision();
+    errno = 0;
 #ifdef BOOK_FORMAT_TARGET
     (void)mode;
     f->descriptor = storage_path_available(path) ? open(path, O_RDONLY, 0) : -1;
@@ -80,6 +108,12 @@ bf_FILE *bf_fopen(const char *path, const char *mode)
         f->file = fopen(path, mode);
     opened = f->file != NULL;
 #endif
+    int saved_errno = errno;
+    observe_file(path, opened ? BOOK_FILE_OPENED :
+                 ((saved_errno == ENOENT || saved_errno == -ENOENT ||
+                   saved_errno == ENOTDIR || saved_errno == -ENOTDIR) ?
+                  BOOK_FILE_MISSING : BOOK_FILE_UNAVAILABLE));
+    errno = saved_errno;
     storage_unlock();
     if (!opened)
     {
@@ -197,7 +231,18 @@ int bf_stat(const char *path, struct stat *st)
 {
     int r;
     storage_lock();
+    errno = 0;
     r = storage_path_available(path) ? stat(path, st) : -1;
+    int saved_errno = errno;
+    /* bf_file rejects missing resources before attempting fopen. Observe that
+     * decision too, so adding a previously absent image invalidates reuse. */
+    if (r)
+        observe_file(path, (saved_errno == ENOENT || saved_errno == -ENOENT ||
+                           saved_errno == ENOTDIR || saved_errno == -ENOTDIR) ?
+                     BOOK_FILE_MISSING : BOOK_FILE_UNAVAILABLE);
+    else if (!S_ISREG(st->st_mode) || (uint64_t)st->st_size > LONG_MAX)
+        observe_file(path, BOOK_FILE_UNAVAILABLE);
+    errno = saved_errno;
     storage_unlock();
     return r;
 }

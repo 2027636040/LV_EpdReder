@@ -3,6 +3,8 @@
 Run with Python 3 and GCC on Linux (including WSL). No image packages required.
 """
 from pathlib import Path
+import argparse
+import hashlib
 import os
 import re
 import struct
@@ -13,7 +15,7 @@ import zlib
 TESTS = Path(__file__).resolve().parent
 ROOT = TESTS.parents[3]
 IMAGE = TESTS.parent
-VENDOR = ROOT / "modules/gallery/third_party"
+VENDOR = IMAGE / "third_party"
 
 
 def chunk(kind, data):
@@ -63,6 +65,12 @@ def expected(width, height, out_w, out_h, pixel):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sample", type=Path, help="Additional PNG to decode at 620x966")
+    parser.add_argument("--reference", type=Path, help="Expected 8-bit gray output of --sample")
+    args = parser.parse_args()
+    if args.reference and not args.sample:
+        parser.error("--reference requires --sample")
     with tempfile.TemporaryDirectory(prefix="raster-test-") as directory:
         directory = Path(directory)
         exe = directory / "raster"
@@ -81,13 +89,16 @@ def main():
             command += ["-I", str(include)]
         subprocess.run(command + [str(s) for s in sources] + ["-lm", "-o", str(exe)], check=True)
 
-        def decode(path, width, height, failure=0, cancel=False):
+        def decode(path, width, height, failure=0, cancel=False, env=None, window=None):
             out = directory / "gray.raw"
             run = subprocess.run([str(exe), str(path), str(width), str(height), str(out),
-                                  str(failure), str(int(cancel))], capture_output=True, text=True)
+                                  str(failure), str(int(cancel))], capture_output=True, text=True,
+                                 env={**os.environ, **(env or {})})
             assert run.returncode == 0, run.stderr
             assert "runtime error:" not in run.stderr, run.stderr
             ok, w, h, calls, peak = map(int, run.stdout.split())
+            if window:
+                assert ok and f"window={window}" in run.stderr, run.stderr
             return ok, w, h, calls, peak, out.read_bytes() if ok else b""
 
         for channels in (1, 3, 4):
@@ -100,6 +111,23 @@ def main():
                     assert not decode(path, 23, 17, failure)[0], failure
                 assert not decode(path, 23, 17, cancel=True)[0]
         print("PASS: grayscale/RGB/RGBA, row/Adam7 pixels, allocation failures and cancellation")
+
+        path = directory / "window.png"
+        pixel = png(path, 503, 197, 3)
+        for env, window in (({"RASTER_SRAM_BYTES": str(57 * 1024)}, "RAM0"),
+                            ({"RASTER_FAIL_SRAM": "1"}, "RAM1"),
+                            ({"RASTER_SRAM_BYTES": "16384"}, "RAM1")):
+            ok, w, h, _, _, data = decode(path, 73, 51, env=env, window=window)
+            assert ok and data == expected(503, 197, w, h, pixel)
+        print("PASS: PNG window uses available RAM0 below old reserve gate; RAM1 fallback preserves pixels")
+        encoded = path.read_bytes()
+        path.write_bytes(encoded[:-16])
+        assert not decode(path, 73, 51)[0]
+        damaged = bytearray(encoded)
+        damaged[-16] ^= 1  # IDAT CRC; leave compressed data intact.
+        path.write_bytes(damaged)
+        assert not decode(path, 73, 51)[0]
+        print("PASS: truncated PNG and bad IDAT CRC release all allocations")
 
         path = directory / "wide.png"
         png(path, 280000, 1, 4, constant=255)
@@ -124,6 +152,23 @@ def main():
         path.write_bytes(path.read_bytes()[:100])
         assert not decode(path, 23, 23)[0]
         print("PASS: baseline software JPEG, allocation failures and truncated input")
+
+        if args.sample:
+            ok, w, h, _, _, original = decode(args.sample, 620, 966)
+            assert ok
+            if args.reference:
+                assert original == args.reference.read_bytes(), "Sample pixels changed"
+            for env, window in (({"RASTER_SRAM_BYTES": str(57 * 1024)}, "RAM0"),
+                                ({"RASTER_FAIL_SRAM": "1"}, "RAM1")):
+                result = decode(args.sample, 620, 966, env=env, window=window)
+                assert result[-1] == original
+                for failure in range(1, result[3] + 1):
+                    assert not decode(args.sample, 620, 966, failure, env=env)[0], failure
+                assert not decode(args.sample, 620, 966, cancel=2, env=env)[0]
+                assert not decode(args.sample, 620, 966,
+                                  env={**env, "RASTER_REMOVE_AFTER_READS": "2"})[0]
+            print(f"PASS: real PNG {w}x{h}, exact gray output SHA256={hashlib.sha256(original).hexdigest()}")
+            print("PASS: real PNG allocation failures, mid-decode cancellation and unavailable source cleanup")
 
 
 if __name__ == "__main__":

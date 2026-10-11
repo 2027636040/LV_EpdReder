@@ -2,6 +2,7 @@
 #include "app_package.h"
 #include "app_installer.h"
 #include "app_module.h"
+#include "app_recovery.h"
 #include "epd_app.h"
 #include "ui_reader_font_cache.h"
 #include "storage.h"
@@ -92,6 +93,14 @@ bool app_package_read(const char *directory, const char *id, epd_app_entry_t *en
 static bool module_open(const char *id, app_entity_info *info)
 {
     info->entry_func = info->user_data = 0;
+    rt_err_t policy = app_recovery_check_dynamic();
+    if (policy != RT_EOK)
+    {
+        /* dlopen executes module_init, so reject before even opening the ELF. */
+        rt_set_errno(policy);
+        LOG_W("app %s: recovery policy blocked load: %d", id, policy);
+        return false;
+    }
     if (app_installer_blocks(id)) return false;
     epd_app_entry_t entry;
     storage_lock();
@@ -157,13 +166,16 @@ static bool module_close(const char *id, const app_entity_info *info)
 
 void app_catalog_init(void)
 {
+    rt_err_t result = app_recovery_init();
+    if (result != RT_EOK) LOG_W("recovery record unavailable: %d; dynamic apps disabled", result);
     gui_app_register_dl_open(module_open);
     gui_app_register_dl_close(module_close);
 }
 
 void app_catalog_process(void)
 {
-    if (storage_changing() || app_installer_busy() || app_service_stopping() ||
+    if (app_recovery_check_dynamic() != RT_EOK ||
+        storage_changing() || app_installer_busy() || app_service_stopping() ||
         background_revision == app_catalog_revision()) return;
     background_revision = app_catalog_revision();
     /* Do not keep storage locked while starting code that may use the filesystem. */

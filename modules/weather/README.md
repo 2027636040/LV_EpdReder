@@ -13,7 +13,9 @@
 | `weather_history.c` / `weather_history_page.c` | 城市历史持久化、互斥快照和分页切换列表 |
 | `ui_weather_data.c` / `weather_icons.c` | 显示数据转换与私有资源选择 |
 | `weather.c` | 单个受管后台线程、30 分钟同步、5 秒重试和互斥快照 |
-| `weather_http.c` / `weather_store.c` | 请求、响应解压、配置和缓存文件 |
+| `weather_http.c` | 和风请求头、天气取消状态和公共 HTTPS 响应适配 |
+| `../common/http/epd_http.c` | HTTPS 传输、证书校验、响应读取及 gzip 解压 |
+| `weather_store.c` | 配置和缓存文件 |
 | `weather_command.c` | 模块运行期间的 `svc weather` 命令 |
 
 平台仅提供 app_fwk、通用控件/字体/图像、网络、存储、受管线程及公共库导出。
@@ -64,7 +66,7 @@ scons -C modules APPS=weather -j8
 设备通过统一网络服务连接和风 HTTPS 服务，不经过上位机；当前实际网络来源是蓝牙 PAN。
 网络服务在 lwIP 线程中检查所选网卡的 Link、IP 和网关；自动同步保留待处理状态，
 直到网络就绪后才开始请求。手动同步和城市校验通过事件等待网络，等待时间最多约 15 秒。
-DNS 使用 lwIP 的线程安全解析接口。TLS 连接、握手及响应读取采用非阻塞套接字和 30 秒截止时间，
+DNS 使用 lwIP 的线程安全同步解析接口，返回前不能由应用取消。TLS 连接、握手及响应读取由公共 HTTPS 组件处理，采用非阻塞套接字和 30 秒截止时间，
 保留 SDK 的 CA 链及域名校验；不跟随重定向，不在 URL 或日志中输出 API Key。
 TLS 的证书有效期检查仍取决于 SDK 的 MBEDTLS_HAVE_TIME_DATE 配置。
 

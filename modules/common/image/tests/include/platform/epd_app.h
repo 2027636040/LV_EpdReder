@@ -5,6 +5,7 @@
 #include <stdint.h>
 #define EPD_APP_SRAM 0
 #define EPD_APP_PSRAM 1
+#define RT_TICK_PER_SECOND 1000
 #define RT_ALIGN(value, alignment) (((value) + (alignment) - 1) & ~((uintptr_t)(alignment) - 1))
 typedef uint32_t rt_uint32_t;
 typedef uint32_t rt_tick_t;

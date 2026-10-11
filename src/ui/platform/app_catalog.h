@@ -16,6 +16,7 @@ typedef struct
     bool has_settings;
     bool resources_only;
     bool background;
+    bool handles_content;
     uint32_t version, data_version;
     char build_id[65];
     storage_volume_t volume;

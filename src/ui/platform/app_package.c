@@ -80,6 +80,53 @@ static bool positive_integer(const cJSON *json, const char *key, uint32_t *value
     return true;
 }
 
+static bool content_extensions_valid(const cJSON *json, bool resources_only)
+{
+    const cJSON *extensions = cJSON_GetObjectItemCaseSensitive(json, "file_extensions");
+    if (!extensions) return true;
+    if (!cJSON_IsArray(extensions) || (resources_only && extensions->child)) return false;
+    const cJSON *item;
+    cJSON_ArrayForEach(item, extensions)
+    {
+        if (!cJSON_IsString(item) || !item->valuestring[0]) return false;
+        for (const char *p = item->valuestring; *p; ++p)
+            if (!((*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9'))) return false;
+        for (const cJSON *previous = extensions->child; previous != item; previous = previous->next)
+            if (!strcmp(previous->valuestring, item->valuestring)) return false;
+    }
+    return true;
+}
+
+bool app_package_handles_path(const char *root, const char *path)
+{
+    if (!path) return false;
+    const char *name = strrchr(path, '/');
+    name = name ? name + 1 : path;
+    const char *extension = strrchr(name, '.');
+    if (!extension || extension == name || !*++extension) return false;
+    cJSON *json = manifest_read(root);
+    if (!json) return false;
+    const char *kind = string_value(json, "kind");
+    bool found = false;
+    if ((!kind || !strcmp(kind, "module")) && content_extensions_valid(json, false))
+    {
+        const cJSON *item;
+        cJSON_ArrayForEach(item, cJSON_GetObjectItemCaseSensitive(json, "file_extensions"))
+        {
+            const char *a = extension, *b = item->valuestring;
+            while (*a && *b)
+            {
+                char lower = *a >= 'A' && *a <= 'Z' ? *a + ('a' - 'A') : *a;
+                if (lower != *b) break;
+                ++a; ++b;
+            }
+            if (!*a && !*b) { found = true; break; }
+        }
+    }
+    cJSON_Delete(json);
+    return found;
+}
+
 bool app_package_metadata(const char *root, const char *id, epd_app_entry_t *entry)
 {
     cJSON *json = manifest_read(root);
@@ -87,7 +134,8 @@ bool app_package_metadata(const char *root, const char *id, epd_app_entry_t *ent
     const char *name = string_value(json, "name");
     const char *kind = string_value(json, "kind");
     bool resources_only = kind && !strcmp(kind, "resources");
-    bool ok = name && *name && strlen(name) < sizeof(entry->name);
+    bool ok = name && *name && strlen(name) < sizeof(entry->name) &&
+              content_extensions_valid(json, resources_only);
     char path[256], program[RT_NAME_MAX + 4];
     snprintf(program, sizeof(program), "%s.so", id);
     struct stat st;
@@ -106,6 +154,8 @@ bool app_package_metadata(const char *root, const char *id, epd_app_entry_t *ent
         entry->has_settings = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(json, "settings"));
         entry->resources_only = resources_only;
         entry->background = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(json, "background"));
+        const cJSON *extensions = cJSON_GetObjectItemCaseSensitive(json, "file_extensions");
+        entry->handles_content = extensions && extensions->child;
         positive_integer(json, "version", &entry->version);
         positive_integer(json, "data_version", &entry->data_version);
         const char *build = string_value(json, "build_id");
@@ -268,7 +318,7 @@ static app_package_status_t package_verify(const char *root, const char *id, boo
         !hash_text(build) || !hash_text(digest) || (icon_item && !cJSON_IsString(icon_item)) ||
         !cJSON_IsBool(cJSON_GetObjectItemCaseSensitive(json, "settings")) ||
         !cJSON_IsBool(cJSON_GetObjectItemCaseSensitive(json, "background")) ||
-        (icon && !relative_path(icon)) ||
+        (icon && !relative_path(icon)) || !content_extensions_valid(json, resources_only) ||
         (resources_only && (!icon || !cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(json, "settings")) ||
                              !cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(json, "background"))))) goto finish;
     status = APP_PACKAGE_INCOMPATIBLE;

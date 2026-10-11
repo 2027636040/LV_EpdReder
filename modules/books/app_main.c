@@ -8,6 +8,10 @@ int pending_page = NAV_IDLE;
 static bool initialized, initialization_attempted;
 static unsigned live_pages, saved_focus[UI_PAGE_COUNT];
 static uint32_t storage_generation;
+static char content_path[STORAGE_PATH_MAX];
+static uint32_t content_session;
+static rt_err_t content_error;
+static uint32_t content_generation;
 static const char *const page_names[] = {"root", "reader"};
 static void page_message(gui_app_msg_type_t message, void *parameter);
 
@@ -249,9 +253,40 @@ static void process_navigation(void)
     }
 }
 
+static void content_process(void)
+{
+    if ((!content_path[0] && !content_error) || !current || !current->foreground ||
+        current->id != UI_PAGE_BOOKSHELF || current->content_generation != content_generation ||
+        live_pages != 1 || !lv_refreshing_done()) return;
+    rt_err_t error = content_error;
+    content_error = RT_EOK;
+    if (error)
+    {
+        popup_open(app_content_error(error), NULL);
+        return;
+    }
+    bool available = storage_path_available(content_path) &&
+        (strcmp(storage_path_root(content_path), STORAGE_SD_ROOT) ||
+         storage_session_valid(STORAGE_SD, content_session));
+    pending_page = NAV_IDLE;
+    ui_reader_close();
+    reader_session = false;
+    unsigned index;
+    bool opened = available && ui_bookshelf_include_path(content_path, &index) && ui_reader_open(index);
+    content_path[0] = 0;
+    if (opened)
+    {
+        reader_session = true;
+        if (page_open(UI_PAGE_READER)) return;
+        ui_reader_close();
+        reader_session = false;
+    }
+    if (current && current->foreground)
+        popup_open("无法打开书籍", available ? "请检查文件或存储设备" : "文件或存储已不可用");
+}
+
 static bool service_process(epd_service_t *service, bool stopping)
 {
-    (void)service;
     document_service_process();
     if (stopping)
     {
@@ -262,6 +297,8 @@ static bool service_process(epd_service_t *service, bool stopping)
         reader_service_deinit();
         bookshelf_service_deinit();
         initialized = false;
+        content_path[0] = 0;
+        content_error = RT_EOK;
         return true;
     }
     if (storage_changing()) return false;
@@ -272,7 +309,8 @@ static bool service_process(epd_service_t *service, bool stopping)
         storage_generation = storage_revision();
         if (launcher_current_page() == UI_PAGE_BOOKSHELF) bookshelf_resume();
     }
-    books_process();
+    content_process();
+    if (books_process()) epd_service_ui_request(service, 1);
     process_navigation();
     return false;
 }
@@ -302,6 +340,7 @@ static void page_message(gui_app_msg_type_t message, void *parameter)
     case GUI_APP_MSG_ONSTART:
     {
         ++live_pages;
+        page->content_generation = content_generation;
         gui_app_close_anim();
         page->id = (unsigned)(uintptr_t)gui_app_this_page_userdata();
         page->screen = lv_screen_active();
@@ -355,8 +394,11 @@ static void page_message(gui_app_msg_type_t message, void *parameter)
 
 int app_main(intent_t intent)
 {
-    (void)intent;
     if (!books_initialize()) return -RT_ENOMEM;
+    ++content_generation;
+    content_error = app_content_receive(intent, content_path, sizeof(content_path));
+    if (content_error == -ENOENT) content_error = RT_EOK;
+    content_session = storage_card_session();
     return gui_app_regist_msg_handler_ext("books", page_message,
                                           (void *)(uintptr_t)UI_PAGE_BOOKSHELF, sizeof(books_page_t));
 }

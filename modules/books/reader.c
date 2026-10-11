@@ -9,6 +9,7 @@
  */
 #include "reader.h"
 #include "storage.h"
+#include "platform/epd_app.h"
 
 #include <string.h>
 #include <fcntl.h>
@@ -31,6 +32,15 @@ extern unsigned short ff_oem2uni(unsigned short oem, unsigned short cp);
 #define DECODE_SPAN 1024u
 static unsigned char g_raw[RAW_PREFETCH_SIZE];
 
+struct reader_cursor
+{
+    struct reader_cursor *next;
+    unsigned char *raw;
+    uint32_t start, size;
+    int fd;
+};
+static reader_cursor_t *g_cursors;
+
 typedef struct
 {
     rt_bool_t opened;
@@ -44,11 +54,19 @@ typedef struct
     rt_bool_t detected_gbk;
     uint32_t position;
     uint32_t raw_start, raw_size;
+    storage_volume_t volume;
+    uint32_t session;
 } reader_ctx_t;
 
 static reader_ctx_t g_reader;
 static rt_mutex_t g_lock;
 static rt_bool_t g_inited;
+
+static bool reader_available(void)
+{
+    return g_reader.opened && storage_path_available(g_reader.path) &&
+           storage_session_valid(g_reader.volume, g_reader.session);
+}
 
 /*---------------------------------------------------------------------------*/
 /* UTF-8 工具 */
@@ -189,6 +207,12 @@ void reader_close(void)
     g_reader.opened = RT_FALSE;
     g_reader.fd = -1;
     g_reader.raw_size = 0;
+    for (reader_cursor_t *cursor = g_cursors; cursor; cursor = cursor->next)
+    {
+        if (cursor->fd >= 0) close(cursor->fd);
+        cursor->fd = -1;
+        cursor->size = 0;
+    }
     rt_mutex_release(g_lock);
 }
 
@@ -200,6 +224,7 @@ static rt_err_t reader_open_file(const char *path)
     uint32_t size;
     off_t sz;
     rt_bool_t gbk;
+    uint32_t session = storage_card_session();
 
     if (path == RT_NULL || path[0] == '\0' || !g_inited)
         return -RT_EINVAL;
@@ -237,11 +262,15 @@ static rt_err_t reader_open_file(const char *path)
 
     /* 编码检测：带 BOM → UTF-8；否则采样校验，不合法按 GBK（读取时转 UTF-8） */
     gbk = (start == 0) ? detect_gbk(fd, size) : RT_FALSE;
+    storage_volume_t volume = !strcmp(storage_path_root(path), STORAGE_SD_ROOT) ? STORAGE_SD : STORAGE_FLASH;
+    if (!storage_session_valid(volume, session)) { close(fd); return -RT_EIO; }
 
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
     memset(&g_reader, 0, sizeof(g_reader));
     g_reader.opened = RT_TRUE;
     g_reader.fd = fd;
+    g_reader.volume = volume;
+    g_reader.session = session;
     rt_snprintf(g_reader.path, sizeof(g_reader.path), "%s", path);
     rt_snprintf(g_reader.title, sizeof(g_reader.title), "%s", path);
     {
@@ -281,7 +310,7 @@ bool reader_get_info(reader_info_t *out)
         return false;
 
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
-    if (!g_reader.opened)
+    if (!reader_available())
     {
         rt_mutex_release(g_lock);
         return false;
@@ -320,31 +349,73 @@ rt_err_t reader_open(const char *path)
 }
 
 /* Called with g_lock held. Cache belongs to the open file, not its encoding. */
-static int raw_read(uint32_t offset, const unsigned char **data)
+static int raw_read(reader_cursor_t *cursor, uint32_t offset, const unsigned char **data)
 {
+    uint32_t *start = cursor ? &cursor->start : &g_reader.raw_start;
+    uint32_t *size = cursor ? &cursor->size : &g_reader.raw_size;
+    unsigned char *raw = cursor ? cursor->raw : g_raw;
+    int fd = cursor ? cursor->fd : g_reader.fd;
+    if (fd < 0) return -RT_EIO;
     uint32_t remaining = g_reader.file_size - offset;
     uint32_t span = remaining < DECODE_SPAN ? remaining : DECODE_SPAN;
-    if (offset < g_reader.raw_start || offset - g_reader.raw_start > g_reader.raw_size ||
-        span > g_reader.raw_size - (offset - g_reader.raw_start))
+    if (offset < *start || offset - *start > *size || span > *size - (offset - *start))
     {
-        if (!g_reader.raw_size || offset != g_reader.raw_start + g_reader.raw_size)
-            if (lseek(g_reader.fd, offset, SEEK_SET) < 0) return -RT_EIO;
-        g_reader.raw_start = offset;
-        g_reader.raw_size = 0;
-        uint32_t want = remaining < sizeof(g_raw) ? remaining : sizeof(g_raw);
-        while (g_reader.raw_size < want)
+        uint32_t retained = 0;
+        if (*size && offset >= *start && offset - *start <= *size)
         {
-            int n = read(g_reader.fd, g_raw + g_reader.raw_size, want - g_reader.raw_size);
-            if (n <= 0) { g_reader.raw_size = 0; return -RT_EIO; }
-            g_reader.raw_size += n;
+            retained = *size - (offset - *start);
+            memmove(raw, raw + (offset - *start), retained);
+        }
+        else if (lseek(fd, offset, SEEK_SET) < 0) return -RT_EIO;
+        *start = offset;
+        *size = retained;
+        uint32_t want = remaining < RAW_PREFETCH_SIZE ? remaining : RAW_PREFETCH_SIZE;
+        while (*size < want)
+        {
+            int n = read(fd, raw + *size, want - *size);
+            if (n <= 0 || !reader_available())
+            { *size = 0; return -RT_EIO; }
+            *size += n;
         }
     }
-    *data = g_raw + (offset - g_reader.raw_start);
+    *data = span ? raw + (offset - *start) : raw;
     return (int)span;
 }
 
-int reader_read_mapped(uint32_t offset, char *buf, rt_size_t buf_size,
-                       uint32_t *offsets, uint32_t *next_offset)
+reader_cursor_t *reader_cursor_create(void)
+{
+    if (!g_inited) return NULL;
+    reader_cursor_t *cursor = epd_app_alloc(sizeof(*cursor), EPD_APP_PSRAM);
+    if (!cursor) return NULL;
+    memset(cursor, 0, sizeof(*cursor));
+    cursor->raw = epd_app_alloc(RAW_PREFETCH_SIZE, EPD_APP_PSRAM);
+    if (!cursor->raw) { epd_app_free(cursor); return NULL; }
+    storage_lock();
+    rt_mutex_take(g_lock, RT_WAITING_FOREVER);
+    cursor->fd = reader_available() ?
+                 open(g_reader.path, O_RDONLY) : -1;
+    if (cursor->fd >= 0) { cursor->next = g_cursors; g_cursors = cursor; }
+    rt_mutex_release(g_lock);
+    storage_unlock();
+    if (cursor->fd < 0) { epd_app_free(cursor->raw); epd_app_free(cursor); return NULL; }
+    return cursor;
+}
+
+void reader_cursor_destroy(reader_cursor_t *cursor)
+{
+    if (!cursor) return;
+    if (g_inited) rt_mutex_take(g_lock, RT_WAITING_FOREVER);
+    reader_cursor_t **link = &g_cursors;
+    while (*link && *link != cursor) link = &(*link)->next;
+    if (*link) *link = cursor->next;
+    if (cursor->fd >= 0) close(cursor->fd);
+    if (g_inited) rt_mutex_release(g_lock);
+    epd_app_free(cursor->raw);
+    epd_app_free(cursor);
+}
+
+int reader_cursor_read(reader_cursor_t *cursor, uint32_t offset, char *buf,
+                       rt_size_t buf_size, uint32_t *offsets, uint32_t *next_offset)
 {
     int out = 0, i = 0, n;
     const unsigned char *raw;
@@ -352,10 +423,10 @@ int reader_read_mapped(uint32_t offset, char *buf, rt_size_t buf_size,
     buf[0] = '\0';
     rt_mutex_take(g_lock, RT_WAITING_FOREVER);
     if (!g_reader.opened) { out = -RT_ERROR; goto done; }
-    if (!storage_path_available(g_reader.path)) { out = -RT_EIO; goto done; }
+    if (!reader_available()) { out = -RT_EIO; goto done; }
     if (offset < g_reader.data_start) offset = g_reader.data_start;
     if (offset > g_reader.file_size) offset = g_reader.file_size;
-    n = raw_read(offset, &raw);
+    n = raw_read(cursor, offset, &raw);
     if (n < 0) { out = -RT_EIO; goto done; }
     while (i < n)
     {
@@ -420,6 +491,12 @@ int reader_read_mapped(uint32_t offset, char *buf, rt_size_t buf_size,
 done:
     rt_mutex_release(g_lock);
     return out;
+}
+
+int reader_read_mapped(uint32_t offset, char *buf, rt_size_t buf_size,
+                       uint32_t *offsets, uint32_t *next_offset)
+{
+    return reader_cursor_read(NULL, offset, buf, buf_size, offsets, next_offset);
 }
 
 int reader_read_text(uint32_t offset, char *buf, rt_size_t buf_size, uint32_t *next_offset)

@@ -1,5 +1,8 @@
 # SiFli / SCons build outputs
 project/build_*/
+/build_*.log
+/project/build_*.log
+/project/build_*.zip
 project/.sconsign.dblite
 project/sf-pkgs/
 project/.sf-pkg/*
@@ -24,6 +27,9 @@ __pycache__/
 
 # Local host UI validation
 /tests/host/
+/tests/diagnostics/module/output/
+/tests/diagnostics/module/.sconsign.dblite
+/tools/tests/build_reader_public/
 
 # IDE (local settings)
 /.vscode/

@@ -23,6 +23,9 @@ int ui_bookshelf_refresh(void);
 void ui_bookshelf_close(void);
 unsigned ui_bookshelf_count(void);
 const ui_bookshelf_book_t *ui_bookshelf_book(unsigned index);
+/* UI thread, after closing the previous reader. Import a full file path into
+ * the active external-book slot without changing the shelf's root listing. */
+bool ui_bookshelf_include_path(const char *path, unsigned *index);
 bool ui_bookshelf_save(unsigned index, const ui_reading_position_t *position);
 /* Drain pending history writes at lifecycle/storage boundaries. UI thread only. */
 bool ui_bookshelf_flush(void);

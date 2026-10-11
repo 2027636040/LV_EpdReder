@@ -13,15 +13,21 @@ typedef struct
     bool sram;
 } fast_header_t;
 
-void *raster_fast_alloc(raster_decoder_t *decoder, size_t bytes)
+static void *fast_alloc(raster_decoder_t *decoder, size_t bytes, bool priority)
 {
     if (!bytes || bytes > SIZE_MAX - sizeof(fast_header_t)) return NULL;
-    rt_uint32_t total, used, peak;
-    rt_memory_info(&total, &used, &peak);
     size_t allocation = bytes + sizeof(fast_header_t);
     fast_header_t *memory = NULL;
-    if (allocation <= FAST_BUDGET - decoder->fast_used && total >= used &&
-        total - used > SRAM_RESERVE && allocation < total - used - SRAM_RESERVE)
+    bool try_sram = priority;
+    if (!priority)
+    {
+        rt_uint32_t total, used, peak;
+        rt_memory_info(&total, &used, &peak);
+        try_sram = decoder->fast_used <= FAST_BUDGET &&
+                   allocation <= FAST_BUDGET - decoder->fast_used && total >= used &&
+                   total - used > SRAM_RESERVE && allocation < total - used - SRAM_RESERVE;
+    }
+    if (try_sram)
         memory = epd_app_alloc(allocation, EPD_APP_SRAM);
     bool sram = memory != NULL;
     if (!memory) memory = epd_app_alloc(allocation, EPD_APP_PSRAM);
@@ -34,6 +40,21 @@ void *raster_fast_alloc(raster_decoder_t *decoder, size_t bytes)
         if (decoder->fast_used > decoder->fast_peak) decoder->fast_peak = decoder->fast_used;
     }
     return memory + 1;
+}
+
+void *raster_fast_alloc(raster_decoder_t *decoder, size_t bytes)
+{
+    return fast_alloc(decoder, bytes, false);
+}
+
+void *raster_fast_alloc_priority(raster_decoder_t *decoder, size_t bytes)
+{
+    return fast_alloc(decoder, bytes, true);
+}
+
+bool raster_fast_is_sram(const void *pointer)
+{
+    return pointer && ((const fast_header_t *)pointer - 1)->sram;
 }
 
 void raster_fast_free(raster_decoder_t *decoder, void *pointer)
@@ -119,7 +140,9 @@ size_t raster_read_some(raster_decoder_t *decoder, void *data, size_t bytes)
             if (start <= decoder->crc_end && start + n > decoder->crc_end)
             {
                 size_t skip = decoder->crc_end - start;
+                tick = rt_tick_get();
                 decoder->content_crc = crc32(decoder->content_crc, decoder->read_buffer + skip, n - skip);
+                decoder->source_crc_ticks += rt_tick_get() - tick;
                 decoder->crc_end = start + n;
             }
             offset = decoder->position - start;

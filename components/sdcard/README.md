@@ -20,6 +20,7 @@
 | `example/consumer/sf-pkg.yaml` | 本地包依赖示例，不会被当前主工程自动启用。 |
 | `example/sdcard_demo.c` | 不依赖 Launcher 或 LVGL 的单一文件使用者示例。 |
 | `tests` | 元数据、真实 SDK 请求核心、组件 worker 和适配测试，以及板级独立编译工具。 |
+| `tests/check_release.py` | 只读检查本地材料、正式发布元数据和已部署包的运行文件一致性。 |
 
 源码仅在本目录维护。项目通过 SF-PKG 消费源码包，Conan 缓存和构建目录是生成物。无需额外创建 JSON 注册表，也不在另一个仓库维护第二份 SD 实现。
 
@@ -150,16 +151,51 @@ sdk.py sf-pkg install
 
 ## 注册表发布流程
 
-发布使用 SDK 现有的“上传 Conan 包，再同步组件目录”流程，注册信息来自 recipe，不另建注册服务。发布前需要确定实际账号 namespace、组件源码仓库 URL，补全 recipe 的 `user`、`url` 和 `homepage` 元数据，并完成实施清单中的功能和运行验收。当前不写入假地址或默认占用 `sifli` namespace。
+当前状态：**未发布**。本地缓存中的 `epd-sdcard/1.0.0` 及项目锁文件仅用于本地消费，不代表组件已上传或已进入公开目录。
 
-以下是发布操作模板，只有完成包验收并确定实际账号后才执行：
+发布使用 SDK 现有的“上传 Conan 包，再同步组件目录”流程，注册信息来自 recipe，不另建注册服务。正式发布还需要以下外部信息和验收结果：
+
+| 所需信息 | 用途和当前状态 |
+| --- | --- |
+| 实际个人或组织 namespace，以及该 namespace 的发布权限 | 填写 recipe 的 `user`，并与 SDK 所选账号一致；尚未提供。 |
+| 正式组件源码仓库 URL、主页 URL、对应源码提交或标签 | 分别填写 `url`、`homepage`，使发布内容可以追溯；尚未确定。 |
+| 发布账号的有效登录状态及访问令牌 | 由 SDK `sf-pkg login` 管理；令牌不属于组件材料，也不由检查工具读取。 |
+| 提供所需 SDIO/MMC 接口的可获取 SDK 版本或补丁引用 | 当前依赖本地 SDK 补丁，见“构建契约”；正式消费者需要能够取得相同接口。 |
+| 目标板验收记录 | 完整构建、真实文件系统和热插拔验收由实施清单记录；主机测试不代替板上验收。 |
+
+### 离线准备检查
+
+从组件目录执行以下命令，无需登录、网络或重新创建包：
 
 ```powershell
+python -B tests/check_release.py
+python -B tests/check_release.py --deployed-package ../../project/sf-pkgs/full_deploy/host/epd-sdcard/1.0.0 --format json
+python -B tests/check_release.py --strict-release
+```
+
+普通模式在本地材料有效时返回 0，同时列出发布字段缺口；严格模式在本地材料无效或缺少正式发布元数据时返回 1。当前严格模式应报告 `user`、`url`、`homepage` 缺失。真实信息写入 recipe 后，可额外传入 `--namespace` 检查所选账号与 `user` 一致；该参数不会代填 recipe。
+
+检查工具只解析 recipe 的静态字段、基础类约定、导出项、必要文件和 Conan 锁定引用，拒绝明显的占位 namespace 或 URL。工具不执行 recipe，不联网验证 URL 的可达性或账号所有权，也不验证远端发布状态。`release_metadata_ready` 只表示元数据检查通过；`publication_verified` 始终为 `false`。真正的 recipe 加载、依赖解析和 SDK 版本范围验证继续使用上文的 Conan `inspect`、`graph info`，并检查图节点的 `info_invalid`。
+
+`--deployed-package` 按字节比较 `include`、`src`、`port`、`Kconfig` 和 `SConscript`；运行文件缺失、新增或内容不同会导致检查失败。部署目录中由构建生成的 `.o`、`.obj` 文件不参与源码比较，也不会被删除。文档、来源说明、示例和测试的差异单独列在 `material_differences` 中。目录比对不能证明该目录对应项目锁定的 recipe revision；依赖引用仍以 `project/sf-pkg.yaml`、`project/.sf-pkg/conan.lock` 和 Conan 实际解析结果为准。
+
+README 和 `tests/*` 同样属于 `exports_sources`。仅修改这些材料也会在下一次 `conan create` 时产生新的 recipe revision。准备检查不会重建或替换本地包，也不会改写项目 pin 或任一锁文件；现有包因此可能保留较早的发布材料。正式打包前应重新导出完整材料，记录 Conan 输出的实际 revision，再同步消费清单及锁文件，不能只手工猜测或替换 revision 字符串。
+
+### 正式构建和发布
+
+以下是发布操作模板，须先提供表中的实际信息、补全 recipe 并完成包验收：
+
+```powershell
+python -B tests/check_release.py --strict-release --namespace <publisher>
+conan inspect . --no-remote --lockfile=conan.lock --format=json
+conan graph info . --no-remote --lockfile=conan.lock --format=json
 sdk.py sf-pkg --user <publisher> build --version 1.0.0
 sdk.py sf-pkg --user <publisher> upload --name epd-sdcard/1.0.0@<publisher> --keep
 ```
 
-`<publisher>` 须替换为实际账号，且与 recipe 的 `user` 一致。SDK 的 build 命令不会自动把所选登录账号写入 recipe。上传后，消费引用同步替换为正式带 namespace 的完整包引用。`--keep` 保留本地包缓存。
+`<publisher>` 须替换为实际账号，且与 recipe 的 `user` 一致。SDK 的 build 命令调用 Conan 创建包，不会自动把所选登录账号写入 recipe。`--keep` 保留本地包缓存。上传成功与目录同步成功是两个结果：当前 SDK 在同步失败时只输出警告，因此不能仅凭命令返回成功就标记已发布。
+
+发布验收应记录完整 Conan 引用及 recipe revision、上传结果、组件目录同步结果和可访问的组件页面；再用独立消费者安装正式带 namespace 的完整引用，核对依赖图和导出的 SCons/Kconfig 文件。完成这些验证后，更新消费者清单、锁文件及本文发布状态。
 
 ## 元数据检查
 

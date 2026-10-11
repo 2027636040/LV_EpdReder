@@ -18,12 +18,14 @@ static void reader_panel_open(void);
 static void reader_toc_open(void);
 static void reader_save_position(void);
 static void reader_resume(void);
+static void reader_resume_prepare(void);
 
 bool reader_session;
 static bool reader_touch = true;
 static unsigned reader_timeout;
 static unsigned saved_bookshelf_first;
 static bool reader_page_live;
+static bool reader_resume_pending;
 static uint32_t books_storage_revision;
 
 void bookshelf_start(lv_obj_t *screen)
@@ -51,6 +53,7 @@ void bookshelf_pause(void) { saved_bookshelf_first = current->bookshelf_first; }
 void reader_start(lv_obj_t *screen)
 {
     reader_page_live = true;
+    reader_resume_pending = false;
     reader_create(screen);
 }
 
@@ -61,6 +64,7 @@ void reader_foreground(void)
 
 void reader_pause(void)
 {
+    reader_resume_pending = false;
     if (!reader_session) return;
     ui_reader_cancel_pending();
     current->reader_confirm_pending = false;
@@ -70,6 +74,7 @@ void reader_pause(void)
 void reader_stop(void)
 {
     reader_page_live = false;
+    reader_resume_pending = false;
     if (document_view_active()) document_view_detach();
 }
 
@@ -98,8 +103,6 @@ bool reader_action(int *request, bool *opened)
         if (target == READER_PREVIOUS || target == READER_NEXT)
         {
             ui_reader_turn(target == READER_PREVIOUS ? -1 : 1);
-            ui_reader_process();
-            reader_update();
             return true;
         }
         if (target == READER_MENU) { reader_panel_open(); return true; }
@@ -185,27 +188,38 @@ bool bookshelf_action(int *request, bool *opened)
     return false;
 }
 
-void books_process(void)
+bool books_process(void)
 {
-    /* Previous iteration already submitted the visible page. Preparation never
-     * changes its revision and may overlap the panel's waveform transmission. */
-    if (reader_session && launcher_current_page() == UI_PAGE_READER &&
-        pending_page == NAV_IDLE && !current->reader_panel && !current->popup &&
-        current->reader_revision == ui_reader_view()->revision)
-        ui_reader_prepare_process();
-    if (reader_session && lv_refreshing_done())
+    bool runnable = false;
+    bool idle = lv_refreshing_done();
+    if (reader_session && idle)
     {
         bool leaving_page = pending_page == NAV_BACK ||
             (pending_page >= UI_PAGE_HOME && pending_page < UI_PAGE_COUNT &&
              pending_page != UI_PAGE_READER);
-        if (launcher_current_page() == UI_PAGE_READER && !leaving_page)
-            ui_reader_process();
-        else
-            ui_reader_index_process();
-        if (launcher_current_page() == UI_PAGE_READER && current->reader_reflow_pending &&
+        bool resuming = idle && reader_resume_pending && reader_page_live &&
+            launcher_current_page() == UI_PAGE_READER && current->foreground && !leaving_page;
+        if (resuming)
+        {
+            reader_resume_pending = false;
+            reader_resume_prepare();
+        }
+        bool foreground = launcher_current_page() == UI_PAGE_READER && !leaving_page &&
+            !current->popup && (!current->reader_panel || current->reader_confirm_pending ||
+                                current->reader_reflow_pending);
+        /* UI priority exceeds lcd_task priority. Yield during the entire refresh,
+         * including CPU-side conversion, and expedite only required page work. */
+        runnable = ui_reader_step(8, foreground, idle) == UI_READER_WORK_TARGET;
+        if (resuming)
+        {
+            reader_update();
+            reader_status_render();
+            if (current->reader_panel) reader_option_render();
+        }
+        if (idle && launcher_current_page() == UI_PAGE_READER && current->reader_reflow_pending &&
             document_view_active() && current->reader_revision != ui_reader_view()->revision)
             reader_render();
-        if (launcher_current_page() == UI_PAGE_READER && current->reader_reflow_pending &&
+        if (idle && launcher_current_page() == UI_PAGE_READER && current->reader_reflow_pending &&
             ((ui_reader_view()->ready && !ui_reader_waiting()) || ui_reader_view()->error[0]))
         {
             current->reader_reflow_pending = false;
@@ -215,16 +229,18 @@ void books_process(void)
             reader_update();
             if (current->reader_panel) reader_option_render();
         }
-        if (!reader_page_live &&
+        if (idle && !reader_page_live &&
             (document_view_active() || !ui_reader_view()->indexing || ui_reader_view()->error[0]))
         {
             ui_reader_close();
             reader_session = false;
+            reader_resume_pending = false;
+            runnable = false;
             if (launcher_current_page() == UI_PAGE_BOOKSHELF) bookshelf_resume();
         }
     }
     if (launcher_current_page() == UI_PAGE_READER && (!current->reader_panel || current->reader_confirm_pending) &&
-        !current->popup && lv_refreshing_done())
+        !current->popup && idle)
     {
         if (current->reader_confirm_pending)
         {
@@ -239,7 +255,7 @@ void books_process(void)
         }
         reader_update();
     }
-
+    return runnable;
 }
 
 static lv_obj_t *book_progress_create(lv_obj_t *parent, int x, int y, int width)
@@ -574,6 +590,12 @@ static void reader_save_position(void)
 
 static void reader_resume(void)
 {
+    /* Lifecycle callbacks may run while the panel is still refreshing. */
+    reader_resume_pending = true;
+}
+
+static void reader_resume_prepare(void)
+{
     if (ui_reader_settings_changed())
     {
         current->reader_reflow_page = ui_reader_view()->page;
@@ -591,14 +613,5 @@ static void reader_resume(void)
             lv_obj_set_width(current->reader_body, WIDTH - 2 * reading->margin);
             lv_obj_set_style_text_line_space(current->reader_body, reading->line_space, 0);
         }
-        ui_reader_process();
-        reader_render();
     }
-    else
-    {
-        ui_reader_process();
-        reader_update();
-    }
-    reader_status_render();
-    if (current->reader_panel) reader_option_render();
 }

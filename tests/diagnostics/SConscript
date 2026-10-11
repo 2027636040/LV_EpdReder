@@ -1,0 +1,5 @@
+from building import *
+cwd = GetCurrentDir()
+group = DefineGroup('diagnostic_fixtures', ['fault_probe.c', 'fixture_control.c'],
+                    depend=[''], CPPPATH=[cwd], CCFLAGS=' -fno-optimize-sibling-calls')
+Return('group')

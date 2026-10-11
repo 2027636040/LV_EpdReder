@@ -9,6 +9,11 @@
 #include "src/misc/lv_text_private.h"
 #include "src/draw/lv_image_decoder_private.h"
 
+RTM_EXPORT(app_content_query);
+RTM_EXPORT(app_content_open);
+RTM_EXPORT(app_content_receive);
+RTM_EXPORT(app_content_error);
+
 static void back_clicked(lv_event_t *event)
 {
     (void)event;
@@ -130,6 +135,7 @@ RTM_EXPORT(lv_image_cache_drop);
 RTM_EXPORT(lv_image_header_cache_drop);
 RTM_EXPORT(lv_label_create);
 RTM_EXPORT(lv_label_set_text);
+RTM_EXPORT(lv_label_set_text_static);
 RTM_EXPORT(lv_label_set_text_fmt);
 RTM_EXPORT(lv_obj_set_pos);
 RTM_EXPORT(lv_obj_set_size);
@@ -202,6 +208,21 @@ void epd_app_font_destroy(lv_font_t *font) { ui_font_reader_destroy(font); }
 bool epd_app_font_prepare(const lv_font_t *font, uint32_t letter, bool adjacent)
 { return ui_reader_font_prepare(font, letter, adjacent); }
 RTM_EXPORT(epd_app_font_prepare);
+const lv_draw_buf_t *epd_app_font_derived_acquire(const lv_font_t *font, uint32_t glyph,
+                                                uint32_t style, lv_cache_entry_t **entry)
+{ return ui_reader_font_derived_acquire(font, glyph, style, entry); }
+const lv_draw_buf_t *epd_app_font_derived_store(const lv_font_t *font, uint32_t glyph,
+                                              uint32_t style, const lv_draw_buf_t *bitmap,
+                                              lv_cache_entry_t **entry)
+{ return ui_reader_font_derived_store(font, glyph, style, bitmap, entry); }
+void epd_app_font_derived_release(lv_cache_entry_t *entry)
+{ ui_reader_font_derived_release(entry); }
+void epd_app_font_derived_drop(const lv_font_t *font)
+{ ui_reader_font_derived_drop(font); }
+RTM_EXPORT(epd_app_font_derived_acquire);
+RTM_EXPORT(epd_app_font_derived_store);
+RTM_EXPORT(epd_app_font_derived_release);
+RTM_EXPORT(epd_app_font_derived_drop);
 RTM_EXPORT(lv_draw_wait_for_finish);
 RTM_EXPORT(rt_work_init);
 RTM_EXPORT(rt_workqueue_sysq);
@@ -235,6 +256,7 @@ RTM_EXPORT(lv_obj_remove_state);
 RTM_EXPORT(lv_obj_get_child);
 RTM_EXPORT(lv_obj_get_style_prop);
 RTM_EXPORT(lv_obj_get_width);
+RTM_EXPORT(lv_obj_get_height);
 RTM_EXPORT(lv_obj_has_flag);
 RTM_EXPORT(lv_obj_has_state);
 RTM_EXPORT(lv_obj_set_height);

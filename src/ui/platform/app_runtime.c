@@ -17,10 +17,14 @@
 
 /* Compiler double helpers use base AAPCS even in a hard-float image. */
 extern int __attribute__((pcs("aapcs"))) __aeabi_d2iz(double);
+extern unsigned int __attribute__((pcs("aapcs"))) __aeabi_d2uiz(double);
 extern double __attribute__((pcs("aapcs"))) __aeabi_dadd(double, double);
 extern double __attribute__((pcs("aapcs"))) __aeabi_dsub(double, double);
 extern double __attribute__((pcs("aapcs"))) __aeabi_dmul(double, double);
 extern double __attribute__((pcs("aapcs"))) __aeabi_i2d(int);
+extern double __attribute__((pcs("aapcs"))) __aeabi_ui2d(unsigned int);
+extern int __attribute__((pcs("aapcs"))) __aeabi_dcmpeq(double, double);
+extern int __attribute__((pcs("aapcs"))) __aeabi_dcmple(double, double);
 extern int __attribute__((pcs("aapcs"))) __aeabi_dcmpge(double, double);
 extern int __attribute__((pcs("aapcs"))) __aeabi_dcmpgt(double, double);
 extern int __attribute__((pcs("aapcs"))) __aeabi_dcmplt(double, double);
@@ -30,6 +34,7 @@ extern void __aeabi_uldivmod(void);
 extern void __aeabi_ldivmod(void);
 
 RTM_EXPORT(__aeabi_d2iz);
+RTM_EXPORT(__aeabi_d2uiz);
 RTM_EXPORT(__aeabi_dadd);
 RTM_EXPORT(__aeabi_dcmpge);
 RTM_EXPORT(__aeabi_dcmpgt);
@@ -38,6 +43,9 @@ RTM_EXPORT(__aeabi_dcmpun);
 RTM_EXPORT(__aeabi_dmul);
 RTM_EXPORT(__aeabi_dsub);
 RTM_EXPORT(__aeabi_i2d);
+RTM_EXPORT(__aeabi_ui2d);
+RTM_EXPORT(__aeabi_dcmpeq);
+RTM_EXPORT(__aeabi_dcmple);
 RTM_EXPORT(__errno);
 RTM_EXPORT(_ctype_);
 RTM_EXPORT(atoi);

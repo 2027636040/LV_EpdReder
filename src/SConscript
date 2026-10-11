@@ -10,6 +10,10 @@ src = ['main.c']
 CPPPATH = [cwd]
 
 objs = DefineGroup('src', src, depend = [''], CPPPATH = CPPPATH)
+if ARGUMENTS.get('DIAG_FIXTURES') == '1':
+    objs += SConscript(os.path.join(cwd, '../tests/diagnostics/SConscript'),
+                       variant_dir=os.path.join(Dir('#').abspath, rtconfig.OUTPUT_DIR, 'diagnostics'),
+                       duplicate=0)
 
 
 

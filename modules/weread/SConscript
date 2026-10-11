@@ -1,0 +1,27 @@
+from building import *
+import os
+
+cwd = GetCurrentDir()
+env = GetCurrentEnv()
+env.Append(CCFLAGS=' -O2 -ffunction-sections -fdata-sections',
+           LINKFLAGS=' -Wl,--gc-sections -Wl,-Bsymbolic -Wl,-u,epd_app_build_id -Wl,--version-script=' +
+                     os.path.join(cwd, 'exports.map'))
+# Select the same libgcc multilib as the module's compiler ABI.
+env.Append(LINKFLAGS=' ' + ' '.join(flag for flag in env.subst('$CCFLAGS').split()
+                                  if flag.startswith(('-mfpu=', '-mfloat-abi='))))
+client_sources = [
+    'client/wr_client.c', 'client/wr_json.c', 'client/wr_models.c',
+    'client/wr_protocol.c', 'client/private/wr_cjson.c',
+    'client/private/wr_md5.c', 'client/private/wr_base64.c',
+]
+objects = DefineGroup('weread', Glob('*.c') + client_sources, depend=[''],
+                      CPPPATH=[cwd, os.path.join(cwd, 'client'),
+                               os.path.join(cwd, '../common/http'),
+                               os.path.join(cwd, '../../src/platform'),
+                               os.path.join(cwd, '../books/third_party/libxml2/include')],
+                      CPPDEFINES=['BUILD_DLMODULE', 'HAVE_CCONFIG_H'], LIBS=['gcc'])
+objects += SConscript(os.path.join(cwd, '../common/http/SConscript'),
+                      variant_dir=os.path.join(cwd, 'output/http'), duplicate=0)
+objects += SConscript(os.path.join(cwd, '../common/reader/SConscript'),
+                      variant_dir=os.path.join(cwd, 'output/reader'), duplicate=0)
+Return('objects')

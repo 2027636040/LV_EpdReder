@@ -12,10 +12,16 @@
 #include "bt_pan.h"
 #include "network.h"
 #include "network_time.h"
+#include "app_service.h"
 #include "ui/platform/app_installer.h"
+#include "ui/platform/app_recovery.h"
 #include "ui/platform/app_memory.h"
+#include "ui/launcher.h"
 #include "buttons.h"
 #include "platform/hang_diag.h"
+#ifdef EPD_DIAG_FIXTURES
+#include "fault_probe.h"
+#endif
 
 #include "board_service.h" /* 板级服务（TF 卡文件系统挂载） */
 
@@ -94,6 +100,7 @@ int main(void)
         LOG_E("Launcher init failed: %d", ret);
         return ret;
     }
+    if (app_recovery_active()) launcher_open(UI_PAGE_SETTINGS);
     LOG_I("Buttons %s", buttons_ready() ? "ready" : "not available");
     LOG_I("Launcher ready");
     mem_report("after launcher");
@@ -103,12 +110,16 @@ int main(void)
     {
         hang_diag_mark(HANG_DIAG_UI, "ui-app-process", 0, RT_TRUE);
         ui_app_process();
+#ifdef EPD_DIAG_FIXTURES
+        diag_fixture_poll();
+#endif
         hang_diag_mark(HANG_DIAG_UI, "lv-timer-handler", 0, RT_TRUE);
         uint32_t ms = lv_timer_handler();
         if (ms == LV_NO_TIMER_READY || ms > 20)
         {
             ms = 20;
         }
+        ms = app_service_ui_delay(ms);
         hang_diag_mark(HANG_DIAG_UI, "loop-delay", ms, RT_TRUE);
         rt_thread_mdelay(ms ? ms : 1);
     }

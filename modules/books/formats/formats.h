@@ -23,6 +23,16 @@ extern "C"
     int book_format_convert(const char *path, const book_sink_t *sink,
                             const book_allocator_t *allocator, char *error, size_t error_capacity);
 
+    typedef enum {
+        BOOK_FILE_OPENED, BOOK_FILE_MISSING, BOOK_FILE_UNAVAILABLE
+    } book_file_event_t;
+    typedef void (*book_file_observer_t)(void *user, const char *path, book_file_event_t event);
+    /* Worker-only, synchronous, non-nesting scope. The callback borrows path,
+     * runs under the storage lock for opens/stat failures, and must not use bf_fopen.
+     * It cannot change conversion status or output. End with the same user. */
+    bool book_file_observer_begin(book_file_observer_t observer, void *user);
+    void book_file_observer_end(void *user);
+
     /* All conversions and markup scopes run serially on one document worker.
      * convert() owns its scope. Private backends using sink->markup must instead
      * call begin(), run their conversion, then end() on every return path.

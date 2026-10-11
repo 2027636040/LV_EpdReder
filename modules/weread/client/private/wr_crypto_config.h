@@ -1,0 +1,5 @@
+#ifndef WR_CRYPTO_CONFIG_H
+#define WR_CRYPTO_CONFIG_H
+#define WR_MBEDTLS_MD5_C
+#define WR_MBEDTLS_BASE64_C
+#endif

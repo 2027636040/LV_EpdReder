@@ -73,6 +73,13 @@ int reader_read_text(uint32_t offset, char *buf, rt_size_t buf_size, uint32_t *n
  * CRLF/CR are normalized to LF; invalid characters become '?'. */
 int reader_read_mapped(uint32_t offset, char *buf, rt_size_t buf_size,
                        uint32_t *offsets, uint32_t *next_offset);
+/* Optional session-owned raw window. NULL uses the shared window. A cursor
+ * remains invalid after reader_close; destroy it before creating a new one. */
+typedef struct reader_cursor reader_cursor_t;
+reader_cursor_t *reader_cursor_create(void);
+void reader_cursor_destroy(reader_cursor_t *cursor);
+int reader_cursor_read(reader_cursor_t *cursor, uint32_t offset, char *buf,
+                       rt_size_t buf_size, uint32_t *offsets, uint32_t *next_offset);
 /* 0: automatic detection, 1: UTF-8, 2: GBK. */
 rt_err_t reader_set_encoding(unsigned encoding);
 

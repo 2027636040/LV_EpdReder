@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "book_internal.h"
+#include "../../common/reader/reader_resource.h"
 
 typedef struct css_rule
 {
@@ -185,6 +186,9 @@ static int css_load(markup *m, const char *href)
     if (!m->resources || bf_external(href))
         return BOOK_OK;
     r = m->resources->open(m->resources->user, m->base, href, &s);
+    /* Only the chapter resource adapter opts into missing-CSS fallback. */
+    if (r == READER_RESOURCE_MISSING)
+        return BOOK_OK;
     if (r < 0)
         return r;
     while ((r = s.read(s.user, chunk, sizeof(chunk))) > 0)

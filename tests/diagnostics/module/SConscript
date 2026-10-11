@@ -1,0 +1,9 @@
+from building import *
+cwd = GetCurrentDir()
+private = ARGUMENTS.get('PRIVATE') == '1'
+group = DefineGroup('diag_fixture', ['probe.c', 'module.c'], depend=[''],
+                    CPPPATH=[cwd + '/..'],
+                    CPPDEFINES=['BUILD_DLMODULE', 'HAVE_CCONFIG_H'] +
+                               (['DIAG_PRIVATE'] if private else []),
+                    CCFLAGS=' -fno-optimize-sibling-calls')
+Return('group')

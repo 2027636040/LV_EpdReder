@@ -49,9 +49,23 @@ def relative_name(name):
     return name
 
 
+def content_extensions(metadata):
+    extensions = metadata.get('file_extensions', [])
+    if (not isinstance(extensions, list) or
+            any(not isinstance(extension, str) or not re.fullmatch('[a-z0-9]+', extension)
+                for extension in extensions)):
+        raise ValueError('file_extensions must be an array of lowercase alphanumeric extensions without dots')
+    if len(set(extensions)) != len(extensions):
+        raise ValueError('file_extensions must not contain duplicates')
+    if metadata.get('kind') == 'resources' and extensions:
+        raise ValueError('Resource packages cannot handle files')
+    return extensions.copy()
+
+
 def build_package(manifest_path, module_path, profile_path, destination, resources=None, icon=None,
                   libraries=None):
     metadata = json.loads(Path(manifest_path).read_text(encoding='utf-8'))
+    extensions = content_extensions(metadata)
     app_id = metadata.get('id', '')
     if not isinstance(app_id, str) or not re.fullmatch('[a-z0-9_]{1,7}', app_id):
         raise ValueError('Application id must contain 1-7 lowercase letters, digits or underscores')
@@ -114,6 +128,8 @@ def build_package(manifest_path, module_path, profile_path, destination, resourc
     package = {key: metadata[key] for key in ('abi', 'id', 'version', 'name', 'data_version')}
     package.update(package_format=1, build_id=profile['build_id'], files_sha256=sha256(index),
                    settings=metadata.get('settings', False), background=metadata.get('background', False), load_bytes=load_bytes)
+    if 'file_extensions' in metadata:
+        package['file_extensions'] = extensions
     if icon:
         package['icon'] = 'icon.ezip'
     if library_spans:

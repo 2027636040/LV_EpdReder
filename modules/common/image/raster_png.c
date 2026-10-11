@@ -10,6 +10,10 @@ typedef struct
     png_infop info;
     uint8_t *row;
     void *window_reserve;
+    bool window_sram;
+    bool window_used;
+    rt_tick_t codec_ticks, scale_ticks;
+    rt_tick_t read_start, crc_start;
 } png_context_t;
 
 static png_voidp png_alloc(png_structp png, png_alloc_size_t bytes)
@@ -20,6 +24,7 @@ static png_voidp png_alloc(png_structp png, png_alloc_size_t bytes)
     {
         memory = context->window_reserve;
         context->window_reserve = NULL;
+        context->window_used = true;
     }
     else memory = raster_fast_alloc(context->decoder, bytes);
     if (!memory) strcpy(context->decoder->error, "图片内存不足");
@@ -56,17 +61,23 @@ bool raster_decode_png(raster_decoder_t *decoder)
     if (!context) { strcpy(decoder->error, "图片内存不足"); return false; }
     memset(context, 0, sizeof(*context));
     context->decoder = decoder;
-    /* Reserve the inflate dictionary before optional row buffers consume RAM0. */
-    context->window_reserve = raster_fast_alloc(decoder, 32768);
+    bool ok = false;
+    /* The repeatedly accessed inflate window gets the first real RAM0 attempt. */
+    context->window_reserve = raster_fast_alloc_priority(decoder, 32768);
+    if (!context->window_reserve) { strcpy(decoder->error, "图片内存不足"); goto done; }
+    context->window_sram = raster_fast_is_sram(context->window_reserve);
     context->png = png_create_read_struct_2(PNG_LIBPNG_VER_STRING, context, png_failure,
                                            png_warning_ignore, context, png_alloc, png_free_memory);
-    bool ok = false;
     if (!context->png) goto done;
     if (setjmp(png_jmpbuf(context->png))) goto done;
     context->info = png_create_info_struct(context->png);
     if (!context->info) goto done;
     png_set_read_fn(context->png, context, png_input);
+    context->read_start = decoder->read_ticks;
+    context->crc_start = decoder->source_crc_ticks;
+    rt_tick_t tick = rt_tick_get();
     png_read_info(context->png, context->info);
+    context->codec_ticks += rt_tick_get() - tick;
     unsigned width = png_get_image_width(context->png, context->info);
     unsigned height = png_get_image_height(context->png, context->info);
     int color = png_get_color_type(context->png, context->info);
@@ -104,7 +115,9 @@ bool raster_decode_png(raster_decoder_t *decoder)
                        (has_alpha ? RASTER_RGBA8888 : RASTER_RGB888);
     }
     /* Without interlace expansion each pass supplies only its own source pixels. */
+    tick = rt_tick_get();
     png_read_update_info(context->png, context->info);
+    context->codec_ticks += rt_tick_get() - tick;
     static const unsigned channels[] = {1, 2, 1, 3, 4, 2};
     if (width > SIZE_MAX / channels[format]) png_error(context->png, "row size overflow");
     size_t row_bytes = (size_t)width * channels[format];
@@ -124,12 +137,26 @@ bool raster_decode_png(raster_decoder_t *decoder)
         for (unsigned y = start_y; y < height; y += step_y)
         {
             if (raster_cancelled(decoder)) goto done;
+            tick = rt_tick_get();
             png_read_row(context->png, context->row, NULL);
+            context->codec_ticks += rt_tick_get() - tick;
+            tick = rt_tick_get();
             raster_sink_row(decoder, start_x, y, step_x, context->row,
                              (width - start_x + step_x - 1) / step_x, format);
+            context->scale_ticks += rt_tick_get() - tick;
         }
     }
+    tick = rt_tick_get();
     png_read_end(context->png, NULL);
+    context->codec_ticks += rt_tick_get() - tick;
+    rt_tick_t read_ticks = decoder->read_ticks - context->read_start;
+    rt_tick_t crc_ticks = decoder->source_crc_ticks - context->crc_start;
+    rt_kprintf("[image] PNG stages: codec=%u ms, scale=%u ms, read=%u ms, source_crc=%u ms, window=%s\n",
+        (unsigned)((uint64_t)(context->codec_ticks - read_ticks - crc_ticks) * 1000 / RT_TICK_PER_SECOND),
+        (unsigned)((uint64_t)context->scale_ticks * 1000 / RT_TICK_PER_SECOND),
+        (unsigned)((uint64_t)read_ticks * 1000 / RT_TICK_PER_SECOND),
+        (unsigned)((uint64_t)crc_ticks * 1000 / RT_TICK_PER_SECOND),
+        context->window_used ? (context->window_sram ? "RAM0" : "RAM1") : "unused");
     ok = true;
 done:
     raster_fast_free(decoder, context->row);

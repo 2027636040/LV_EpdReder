@@ -18,8 +18,6 @@
 #define WINDOW_CAPACITY 4096u
 #define STREAM_CAPACITY (2 * WINDOW_CAPACITY)
 #define METRIC_CACHE_SIZE 1024u
-#define INDEX_BUDGET_MS 8
-#define PREPARE_BUDGET_MS 8
 #define PAGE_CACHE_COUNT 3
 #define CHARACTER_SET_BYTES (0x110000u / 8u)
 #define MAX_PAGES UI_READER_PAGE_MAX
@@ -37,6 +35,7 @@ typedef struct
     uint32_t *mapping;
     unsigned head, tail;
     uint32_t source;
+    reader_cursor_t *cursor;
 } text_stream_t;
 
 typedef struct
@@ -59,17 +58,24 @@ static struct
     ui_reader_view_t view;
     reader_info_t file;
     lv_font_t *font, *fallback;
-    char *text, *scratch;
+    char *text, *scratch, *index_text;
     text_stream_t index_stream, display_stream, prepare_stream;
     prepared_page_t prepared[PAGE_CACHE_COUNT];
+    prepared_page_t pending;
     int building;
-    unsigned prepare_page, ahead_head, ahead_tail;
+    unsigned ahead_head, ahead_tail, warmed_target;
     uint32_t ahead_source;
     char *ahead_text;
-    uint8_t *characters;
+    uint8_t *characters, *discovered;
+    reader_cursor_t *ahead_cursor;
+    uint32_t pending_letter;
+    unsigned pending_characters;
     unsigned unique_characters, prepared_characters;
     bool scan_complete;
     bool prepare_blocked;
+    bool index_collect, discover_index, glyph_waited;
+    int direction;
+    char error[96];
     lv_font_t measure_font;
     metric_t *metrics;
     uint32_t *offsets;
@@ -104,9 +110,7 @@ static bool reserve(unsigned count)
 
 static void fail(const char *message)
 {
-    snprintf(reader.view.error, sizeof(reader.view.error), "%s", message);
-    reader.view.indexing = false;
-    ++reader.view.revision;
+    snprintf(reader.error, sizeof(reader.error), "%s", message);
 }
 
 /* This font is used only by the line breaker, never to draw glyphs. */
@@ -152,6 +156,42 @@ static void stream_destroy(text_stream_t *stream)
 {
     epd_app_free(stream->text);
     epd_app_free(stream->mapping);
+    reader_cursor_destroy(stream->cursor);
+}
+
+static uint32_t next_letter(const char *text, unsigned *offset);
+
+static void discover(const char *text, unsigned bytes)
+{
+    if (!reader.discovered || !reader.characters) return;
+    unsigned at = 0;
+    while (at < bytes)
+    {
+        uint32_t letter = next_letter(text, &at);
+        if (letter < 0x20 || letter == 0x7f || letter >= 0x110000u) continue;
+        uint8_t bit = (uint8_t)(1u << (letter & 7u));
+        if (reader.discovered[letter >> 3] & bit) continue;
+        reader.discovered[letter >> 3] |= bit;
+        ++reader.unique_characters;
+        if (!(reader.characters[letter >> 3] & bit))
+        {
+            if (!reader.pending_characters || letter < reader.pending_letter) reader.pending_letter = letter;
+            ++reader.pending_characters;
+        }
+    }
+}
+
+static void prepare_letter(uint32_t letter, bool adjacent)
+{
+    if (letter < 0x20 || letter == 0x7f || letter >= 0x110000u) return;
+    if (!reader.glyph_waited) { lv_draw_wait_for_finish(); reader.glyph_waited = true; }
+    if (epd_app_font_prepare(reader.font, letter, adjacent)) ++reader.prepared_characters;
+    uint8_t bit = (uint8_t)(1u << (letter & 7u));
+    if (reader.characters && !(reader.characters[letter >> 3] & bit))
+    {
+        reader.characters[letter >> 3] |= bit;
+        if (reader.discovered && (reader.discovered[letter >> 3] & bit)) --reader.pending_characters;
+    }
 }
 
 static unsigned page_lines(void)
@@ -177,9 +217,14 @@ static int measure_line(text_stream_t *stream, char *output, unsigned *copied, u
             stream->tail = available;
         }
         uint32_t next = stream->source;
-        int n = reader_read_mapped(stream->source, stream->text + stream->tail, room,
+        int n = reader_cursor_read(stream->cursor, stream->source, stream->text + stream->tail, room,
                                    stream->mapping + stream->tail, &next);
         if (n < 0 || next <= stream->source) return -RT_EIO;
+        if (stream == &reader.index_stream && reader.discover_index)
+        {
+            discover(stream->text + stream->tail, n);
+            reader.ahead_source = next;
+        }
         stream->source = next;
         stream->tail += n;
         available += n;
@@ -205,22 +250,6 @@ static int measure_line(text_stream_t *stream, char *output, unsigned *copied, u
     return 1;
 }
 
-static int page_measure(uint32_t start, char *output, uint32_t *end)
-{
-    text_stream_t *stream = &reader.display_stream;
-    if (stream->mapping[stream->head] != start) stream_reset(stream, start);
-    unsigned copied = 0;
-    *end = start;
-    for (unsigned line = 0; line < page_lines(); ++line)
-    {
-        int result = measure_line(stream, output, &copied, end);
-        if (result < 0) return result;
-        if (!result) break;
-    }
-    output[copied] = '\0';
-    return (int)copied;
-}
-
 static prepared_page_t *prepared_find(unsigned page)
 {
     for (unsigned i = 0; i < PAGE_CACHE_COUNT; ++i)
@@ -230,16 +259,21 @@ static prepared_page_t *prepared_find(unsigned page)
 
 static prepared_page_t *prepared_slot(unsigned page)
 {
-    prepared_page_t *slot = &reader.prepared[0];
+    prepared_page_t *slot = NULL;
+    prepared_page_t *duplicate = NULL;
     unsigned distance = 0;
     for (unsigned i = 0; i < PAGE_CACHE_COUNT; ++i)
     {
         prepared_page_t *p = &reader.prepared[i];
+        if (!p->text) continue;
         if (!p->valid) return p;
+        /* The target already has an independent commit buffer. Reclaim its
+         * duplicate before either neighbour when optional slots are scarce. */
+        if (reader.pending.valid && reader.pending.page == page && p->page == page) duplicate = p;
         unsigned d = p->page > page ? p->page - page : page - p->page;
-        if (d > distance) { distance = d; slot = p; }
+        if (!slot || d > distance) { distance = d; slot = p; }
     }
-    return slot;
+    return duplicate && distance <= 1 ? duplicate : slot;
 }
 
 static uint32_t next_letter(const char *text, unsigned *offset)
@@ -264,13 +298,14 @@ static bool prepare_neighbour(unsigned page)
         uint32_t letter = next_letter(p->text, &next);
         /* A speculative allocation failure must not starve the rest of the
          * page/book. Actual drawing can retry through the original callback. */
-        epd_app_font_prepare(reader.font, letter, true);
+        prepare_letter(letter, true);
         p->warmed = next;
         return true;
     }
     if (reader.building < 0 || reader.prepared[reader.building].page != page)
     {
-        p = prepared_slot(reader.view.page - 1);
+        p = prepared_slot(reader.wanted);
+        if (!p || !reader.prepare_stream.text || !reader.prepare_stream.mapping) return false;
         reader.building = p - reader.prepared;
         p->page = page;
         p->bytes = p->lines = p->warmed = 0;
@@ -291,62 +326,46 @@ static bool prepare_neighbour(unsigned page)
     return true;
 }
 
-void ui_reader_prepare_process(void)
+static bool prepare_far(void)
 {
-    if (document_view_active()) { document_view_prepare(); return; }
-    if (!reader.opened || ui_reader_waiting() || reader.view.error[0]) return;
-    reader_info_t current;
-    if (!reader_get_info(&current) || strcmp(current.path, reader.file.path)) return;
-    if (reader.prepare_page != reader.view.page)
+    if (reader.pending_characters)
     {
-        reader.prepare_page = reader.view.page;
-        reader.building = -1;
-        reader.prepare_blocked = false;
-        for (unsigned i = 0; i < PAGE_CACHE_COUNT; ++i) reader.prepared[i].warmed = 0;
+        /* Bound a sparse-set search as well as glyph work. */
+        for (unsigned i = 0; i < 256 && reader.pending_letter < 0x110000u; ++i)
+        {
+            uint32_t letter = reader.pending_letter++;
+            uint8_t bit = (uint8_t)(1u << (letter & 7u));
+            if ((reader.discovered[letter >> 3] & bit) && !(reader.characters[letter >> 3] & bit))
+            { prepare_letter(letter, false); break; }
+        }
+        return true;
     }
-    if (reader.prepare_blocked) return;
-    /* Finish outstanding LVGL/EPIC tasks, not the LCD panel's waveform. */
-    lv_draw_wait_for_finish();
-    rt_tick_t started = rt_tick_get();
-    do
+    if (reader.scan_complete || !reader.ahead_text) return false;
+    if (reader.ahead_head == reader.ahead_tail)
     {
-        if (prepare_neighbour(reader.view.page)) continue;
-        if (reader.view.page > 1 && prepare_neighbour(reader.view.page - 2)) continue;
-        if (reader.ahead_head == reader.ahead_tail)
+        if (reader.ahead_source >= reader.file.file_size)
         {
-            if (reader.ahead_source >= reader.file.file_size)
-            {
-                if (!reader.scan_complete)
-                {
-                    reader.scan_complete = true;
-                    LV_LOG_USER("book characters: unique=%u, prepared=%u",
-                                reader.unique_characters, reader.prepared_characters);
-                }
-                break;
-            }
-            uint32_t next = reader.ahead_source;
-            int n = reader_read_text(next, reader.ahead_text, STREAM_CAPACITY, &next);
-            if (n <= 0) { reader.prepare_blocked = true; break; }
-            reader.ahead_head = 0;
-            reader.ahead_tail = n;
-            reader.ahead_source = next;
+            reader.scan_complete = true;
+            return false;
         }
-        unsigned next = reader.ahead_head;
-        uint32_t letter = next_letter(reader.ahead_text, &next);
-        reader.ahead_head = next;
-        if (letter < 0x20 || letter == 0x7f || letter >= 0x110000u) continue;
+        uint32_t next = reader.ahead_source;
+        int n = reader_cursor_read(reader.ahead_cursor, next, reader.ahead_text, STREAM_CAPACITY, NULL, &next);
+        if (n <= 0) { reader.prepare_blocked = true; return false; }
+        reader.ahead_head = 0;
+        reader.ahead_tail = n;
+        reader.ahead_source = next;
+    }
+    uint32_t letter = next_letter(reader.ahead_text, &reader.ahead_head);
+    if (letter >= 0x20 && letter != 0x7f && letter < 0x110000u)
+    {
         uint8_t bit = (uint8_t)(1u << (letter & 7u));
-        if (!(reader.characters[letter >> 3] & bit))
+        if (!reader.characters || !(reader.characters[letter >> 3] & bit))
         {
-            reader.characters[letter >> 3] |= bit;
             ++reader.unique_characters;
-            /* Always visit the complete book for descriptor preparation. When
-             * pixels reach their budget, keep scanning without evicting nearby
-             * glyphs. The scan cursor is independent of page navigation. */
-            if (epd_app_font_prepare(reader.font, letter, false)) ++reader.prepared_characters;
+            prepare_letter(letter, false);
         }
-    } while (!reader.prepare_blocked &&
-             (rt_tick_t)(rt_tick_get() - started) < rt_tick_from_millisecond(PREPARE_BUDGET_MS));
+    }
+    return true;
 }
 
 static bool index_load(void)
@@ -395,23 +414,9 @@ static void index_save(void)
     header.count = reader.count;
     header.checksum = offsets_hash(reader.offsets, reader.count + 1);
     memcpy(header.path, book->file.path, sizeof(header.path));
-    char directory[64];
-    ui_bookshelf_cache_path(reader.book, directory, sizeof(directory), "idx");
-    char *separator = strrchr(directory, '/');
-    if (separator) { *separator = 0; if (!storage_mkdirs(directory)) return; }
     ui_bookshelf_cache_path(reader.book, path, sizeof(path), "idx");
-    char temporary[72];
-    snprintf(temporary, sizeof(temporary), "%s.tmp", path);
-    storage_lock();
-    int fd = storage_app_available("books") ? open(temporary, O_CREAT | O_TRUNC | O_WRONLY, 0) : -1;
-    if (fd < 0) { storage_unlock(); return; }
-    unsigned bytes = (reader.count + 1) * sizeof(uint32_t);
-    bool ok = write(fd, &header, sizeof(header)) == sizeof(header) &&
-              write(fd, reader.offsets, bytes) == bytes && fsync(fd) == 0;
-    if (close(fd)) ok = false;
-    if (ok) ok = storage_app_available("books") && storage_file_commit(temporary, path);
-    if (!ok && storage_app_available("books")) unlink(temporary);
-    storage_unlock();
+    document_save_async(path, &header, sizeof(header), reader.offsets,
+                        (reader.count + 1) * sizeof(uint32_t));
 }
 
 static void position_save(void)
@@ -436,33 +441,8 @@ static void position_save(void)
 
 static void show_page(void)
 {
-    uint32_t start = reader.offsets[reader.wanted], end = start;
-    prepared_page_t *cached = prepared_find(reader.wanted);
-    int n;
-    if (cached)
-    {
-        n = cached->bytes;
-        end = cached->end;
-        memcpy(reader.scratch, cached->text, n + 1);
-    }
-    else n = page_measure(start, reader.scratch, &end);
-    if (n < 0 || end != reader.offsets[reader.wanted + 1])
-    {
-        fail("读取失败，请检查存储后重新打开书籍");
-        return;
-    }
-    memcpy(reader.text, reader.scratch, n + 1);
-    if (!cached)
-    {
-        cached = prepared_slot(reader.wanted);
-        cached->page = reader.wanted;
-        cached->bytes = n;
-        cached->end = end;
-        cached->warmed = 0;
-        cached->valid = true;
-        memcpy(cached->text, reader.scratch, n + 1);
-    }
-    reader.building = -1;
+    uint32_t start = reader.offsets[reader.wanted], end = reader.pending.end;
+    memcpy(reader.text, reader.scratch, reader.pending.bytes + 1);
     reader.view.page = reader.wanted + 1;
     reader.view.ready = true;
     uint32_t size = reader.file.file_size - reader.file.data_start;
@@ -474,8 +454,11 @@ static void show_page(void)
 
 static bool layout_prepare(uint32_t anchor)
 {
-    reader.prepare_page = 0;
     reader.building = -1;
+    memset(&reader.pending, 0, sizeof(reader.pending));
+    reader.pending.text = reader.scratch;
+    reader.direction = 1;
+    reader.warmed_target = 0;
     for (unsigned i = 0; i < PAGE_CACHE_COUNT; ++i) reader.prepared[i].valid = false;
     static const unsigned sizes[] = {16, 18, 20, 22, 24, 28, 32, 36};
     static const unsigned margins[] = {4, 8, 12, 16, 20};
@@ -501,8 +484,11 @@ static bool layout_prepare(uint32_t anchor)
     reader.ahead_head = reader.ahead_tail = 0;
     reader.ahead_source = reader.file.data_start;
     reader.unique_characters = reader.prepared_characters = 0;
+    reader.pending_characters = 0;
+    reader.pending_letter = 0;
     reader.scan_complete = reader.prepare_blocked = false;
-    memset(reader.characters, 0, CHARACTER_SET_BYTES);
+    if (reader.characters) memset(reader.characters, 0, CHARACTER_SET_BYTES);
+    if (reader.discovered) memset(reader.discovered, 0, CHARACTER_SET_BYTES);
     memset(reader.metrics, 0, METRIC_CACHE_SIZE * sizeof(*reader.metrics));
     memset(&reader.measure_font, 0, sizeof(reader.measure_font));
     reader.measure_font.get_glyph_dsc = metric_descriptor;
@@ -528,6 +514,7 @@ static bool layout_prepare(uint32_t anchor)
     reader.complete = false;
     reader.view.ready = false;
     reader.view.error[0] = '\0';
+    reader.error[0] = '\0';
     reader.view.indexing = true;
     ++reader.view.revision;
     if (!index_load())
@@ -535,6 +522,7 @@ static bool layout_prepare(uint32_t anchor)
         if (!reserve(2)) { fail("分页内存不足"); return false; }
         reader.offsets[0] = reader.file.data_start;
     }
+    reader.discover_index = !reader.complete && reader.discovered && reader.characters;
     return true;
 }
 
@@ -546,12 +534,15 @@ void ui_reader_close(void)
     epd_app_font_destroy(reader.font);
     epd_app_font_destroy(reader.fallback);
     epd_app_free(reader.text); epd_app_free(reader.scratch);
+    epd_app_free(reader.index_text);
     stream_destroy(&reader.index_stream);
     stream_destroy(&reader.display_stream);
     stream_destroy(&reader.prepare_stream);
     for (unsigned i = 0; i < PAGE_CACHE_COUNT; ++i) epd_app_free(reader.prepared[i].text);
     epd_app_free(reader.ahead_text);
     epd_app_free(reader.characters);
+    epd_app_free(reader.discovered);
+    reader_cursor_destroy(reader.ahead_cursor);
     epd_app_free(reader.metrics); epd_app_free(reader.offsets);
     memset(&reader, 0, sizeof(reader));
 }
@@ -568,23 +559,28 @@ bool ui_reader_open(unsigned book_index)
     reader.view.title = book->file.name;
     reader.text = epd_app_alloc(TEXT_CAPACITY, EPD_APP_PSRAM);
     reader.scratch = epd_app_alloc(TEXT_CAPACITY, EPD_APP_PSRAM);
+    reader.metrics = epd_app_alloc(METRIC_CACHE_SIZE * sizeof(*reader.metrics), EPD_APP_PSRAM);
+    if (!reader.text || !reader.scratch || !reader.metrics ||
+        !stream_create(&reader.index_stream) || !stream_create(&reader.display_stream))
+    { ui_reader_close(); return false; }
+    reader.index_stream.cursor = reader_cursor_create();
+    reader.display_stream.cursor = reader_cursor_create();
+    reader.index_text = epd_app_alloc(TEXT_CAPACITY, EPD_APP_PSRAM);
     reader.ahead_text = epd_app_alloc(STREAM_CAPACITY, EPD_APP_PSRAM);
     reader.characters = epd_app_alloc(CHARACTER_SET_BYTES, EPD_APP_PSRAM);
+    reader.discovered = epd_app_alloc(CHARACTER_SET_BYTES, EPD_APP_PSRAM);
+    reader.ahead_cursor = reader_cursor_create();
     for (unsigned i = 0; i < PAGE_CACHE_COUNT; ++i)
     {
         reader.prepared[i].text = epd_app_alloc(TEXT_CAPACITY, EPD_APP_PSRAM);
-        if (!reader.prepared[i].text) { ui_reader_close(); return false; }
     }
-    reader.metrics = epd_app_alloc(METRIC_CACHE_SIZE * sizeof(*reader.metrics), EPD_APP_PSRAM);
-    if (!reader.text || !reader.scratch || !reader.ahead_text || !reader.metrics || !reader.characters ||
-        !stream_create(&reader.index_stream) || !stream_create(&reader.display_stream) ||
-        !stream_create(&reader.prepare_stream))
-    { ui_reader_close(); return false; }
+    stream_create(&reader.prepare_stream);
+    if (reader.prepare_stream.text && reader.prepare_stream.mapping)
+        reader.prepare_stream.cursor = reader_cursor_create();
     reader.text[0] = '\0';
     reader.view.text = reader.text;
     if (!layout_prepare(book->position.offset)) { ui_reader_close(); return false; }
-    /* The page is activated only after navigation has reached the reader. */
-    ui_reader_index_process();
+    /* Computation and activation both begin at the shared UI service step. */
     return true;
 }
 
@@ -597,50 +593,194 @@ bool ui_reader_reflow(void)
     return layout_prepare(anchor);
 }
 
-static void index_process(bool foreground)
+static void resolve_target(void)
 {
-    if (!reader.opened || reader.view.error[0]) return;
-    reader_info_t current;
-    if (!reader_get_info(&current) || strcmp(current.path, reader.file.path))
+    if (reader.restoring && reader.count &&
+        (reader.complete || reader.anchor < reader.offsets[reader.count]))
     {
-        fail("书籍已被关闭或切换，请返回书架重开");
-        return;
-    }
-    rt_tick_t started = rt_tick_get();
-    rt_tick_t budget = rt_tick_from_millisecond(INDEX_BUDGET_MS);
-    if (!budget) budget = 1;
-    while (!reader.complete)
-    {
-        /* Present a requested page before spending time on later pages. */
-        if (foreground && reader.count &&
-            (reader.restoring ? reader.anchor < reader.offsets[reader.count] :
-                               reader.wanted < reader.count && ui_reader_waiting())) break;
-        uint32_t start = reader.offsets[reader.count];
-        int n = measure_line(&reader.index_stream, NULL, &reader.index_bytes, &reader.index_end);
-        if (n < 0) { fail("读取失败，请检查存储后重新打开书籍"); return; }
-        ++reader.index_line;
-        if (!n || reader.index_line >= page_lines() || reader.index_end >= reader.file.file_size)
+        unsigned lo = 0, hi = reader.count;
+        while (lo + 1 < hi)
         {
-            uint32_t end = reader.index_end;
-            if (end <= start && start < reader.file.file_size)
-            { fail("读取失败，请检查存储后重新打开书籍"); return; }
-            if (!reserve(reader.count + 2)) { fail("分页内存不足，无法继续排版"); return; }
-            reader.offsets[++reader.count] = end;
-            reader.index_line = reader.index_bytes = 0;
-            reader.complete = end >= reader.file.file_size;
-            if (reader.complete) index_save();
+            unsigned mid = lo + (hi - lo) / 2;
+            if (reader.offsets[mid] <= reader.anchor) lo = mid;
+            else hi = mid;
         }
-        /* A line (including a storage read) is the smallest scheduling unit. */
-        if ((rt_tick_t)(rt_tick_get() - started) >= budget) break;
+        reader.wanted = lo;
+        reader.restoring = false;
     }
-    reader.view.indexing = !reader.complete;
-    reader.view.pages = reader.complete ? reader.count : 0;
+    if (reader.complete && reader.count && reader.wanted >= reader.count) reader.wanted = reader.count - 1;
 }
 
-void ui_reader_index_process(void)
+static bool near_target(unsigned page)
 {
-    if (document_view_active()) { document_view_process(false); return; }
-    index_process(false);
+    return reader.restoring || page == reader.wanted ||
+           (page > reader.wanted ? page - reader.wanted : reader.wanted - page) == 1;
+}
+
+static void index_step(void)
+{
+    uint32_t start = reader.offsets[reader.count];
+    if (!reader.index_line) reader.index_collect = reader.index_text && near_target(reader.count);
+    int n = measure_line(&reader.index_stream, reader.index_collect ? reader.index_text : NULL,
+                         &reader.index_bytes, &reader.index_end);
+    if (n < 0) { fail("读取失败，请检查存储后重新打开书籍"); return; }
+    ++reader.index_line;
+    if (!n || reader.index_line >= page_lines() || reader.index_end >= reader.file.file_size)
+    {
+        uint32_t end = reader.index_end;
+        if (end <= start && start < reader.file.file_size)
+        { fail("读取失败，请检查存储后重新打开书籍"); return; }
+        if (!reserve(reader.count + 2)) { fail("分页内存不足，无法继续排版"); return; }
+        unsigned page = reader.count;
+        reader.offsets[++reader.count] = end;
+        reader.complete = end >= reader.file.file_size;
+        resolve_target();
+        if (reader.index_collect && near_target(page))
+        {
+            reader.index_text[reader.index_bytes] = 0;
+            if (!reader.restoring && page == reader.wanted)
+            {
+                reader.pending = (prepared_page_t){reader.scratch, end, page, reader.index_bytes,
+                                                  reader.index_line, 0, true};
+                memcpy(reader.scratch, reader.index_text, reader.index_bytes + 1);
+            }
+            prepared_page_t *p = prepared_slot(reader.restoring ? page : reader.wanted);
+            if (p)
+            {
+                char *spare = p->text;
+                *p = (prepared_page_t){reader.index_text, end, page, reader.index_bytes,
+                                       reader.index_line, 0, true};
+                reader.index_text = spare;
+                reader.building = -1;
+            }
+        }
+        reader.index_line = reader.index_bytes = 0;
+        if (reader.complete) index_save();
+    }
+}
+
+static bool target_ready(void)
+{
+    return !reader.restoring && reader.wanted < reader.count &&
+           reader.pending.valid && reader.pending.page == reader.wanted;
+}
+
+static void target_step(void)
+{
+    prepared_page_t *p = &reader.pending;
+    prepared_page_t *cached = prepared_find(reader.wanted);
+    if (cached)
+    {
+        *p = *cached;
+        p->text = reader.scratch;
+        memcpy(p->text, cached->text, cached->bytes + 1);
+        return;
+    }
+    if (p->valid || !p->lines || p->page != reader.wanted)
+    {
+        *p = (prepared_page_t){reader.scratch, reader.offsets[reader.wanted], reader.wanted, 0, 0, 0, false};
+        stream_reset(&reader.display_stream, p->end);
+    }
+    int result = measure_line(&reader.display_stream, p->text, &p->bytes, &p->end);
+    if (result < 0) { fail("读取失败，请检查存储后重新打开书籍"); return; }
+    if (!result || ++p->lines >= page_lines() || p->end >= reader.file.file_size)
+    {
+        p->text[p->bytes] = 0;
+        p->valid = p->end == reader.offsets[reader.wanted + 1];
+        if (!p->valid) fail("读取失败，请检查存储后重新打开书籍");
+        else
+        {
+            prepared_page_t *slot = prepared_slot(reader.wanted);
+            if (slot)
+            {
+                char *text = slot->text;
+                *slot = *p;
+                slot->text = text;
+                memcpy(text, p->text, p->bytes + 1);
+                reader.building = -1;
+            }
+        }
+    }
+}
+
+static bool neighbour_work(unsigned page, bool advance)
+{
+    if (reader.prepare_blocked || !reader.prepare_stream.text || !reader.prepare_stream.mapping ||
+        !prepared_slot(reader.wanted)) return false;
+    if (page >= reader.count)
+    {
+        if (reader.complete) return false;
+        if (advance) index_step();
+        return true;
+    }
+    prepared_page_t *p = prepared_find(page);
+    if (p && p->warmed >= p->bytes) return false;
+    if (advance) prepare_neighbour(page);
+    return true;
+}
+
+static bool compute_step(bool advance)
+{
+    resolve_target();
+    if (reader.restoring || reader.wanted >= reader.count)
+    { if (advance) index_step(); return true; }
+    if (!target_ready()) { if (advance) target_step(); return true; }
+    if (reader.warmed_target != reader.wanted + 1)
+    {
+        if (!advance) return true;
+        reader.warmed_target = reader.wanted + 1;
+        for (unsigned i = 0; i < PAGE_CACHE_COUNT; ++i) reader.prepared[i].warmed = 0;
+    }
+    unsigned slots = 0;
+    for (unsigned i = 0; i < PAGE_CACHE_COUNT; ++i) if (reader.prepared[i].text) ++slots;
+    unsigned next = reader.wanted + 1;
+    if (reader.direction < 0 && reader.wanted && neighbour_work(reader.wanted - 1, advance)) return true;
+    if ((reader.direction >= 0 || !reader.wanted || slots > 1) && neighbour_work(next, advance)) return true;
+    if (reader.direction >= 0 && reader.wanted && slots > 1 && neighbour_work(reader.wanted - 1, advance)) return true;
+    if (!reader.complete) { if (advance) index_step(); return true; }
+    if (reader.prepare_blocked) return false;
+    bool work = reader.pending_characters || (reader.ahead_text && !reader.scan_complete &&
+        (reader.ahead_head < reader.ahead_tail || reader.ahead_source < reader.file.file_size));
+    return work && (!advance || prepare_far());
+}
+
+ui_reader_work_t ui_reader_step(uint32_t budget_ms, bool foreground, bool commit)
+{
+    if (document_view_active()) return document_view_step(budget_ms, foreground, commit);
+    if (!reader.opened) return UI_READER_WORK_IDLE;
+    reader_info_t current;
+    if (!reader_get_info(&current) || strcmp(current.path, reader.file.path) ||
+        !storage_path_available(reader.file.path)) fail("书籍已被关闭或切换，请返回书架重开");
+    reader.glyph_waited = false;
+    rt_tick_t started = rt_tick_get();
+    rt_tick_t budget = rt_tick_from_millisecond(budget_ms > INT_MAX ? INT_MAX : (int)budget_ms);
+    if (budget_ms && !budget) budget = 1;
+    bool present = foreground && commit && ui_reader_waiting();
+    while (budget_ms && !reader.error[0])
+    {
+        if (present && !reader.restoring && target_ready()) break;
+        if (!compute_step(true)) break;
+        if ((rt_tick_t)(rt_tick_get() - started) >= budget) break;
+    }
+    if (commit)
+    {
+        if (reader.error[0])
+        {
+            if (strcmp(reader.view.error, reader.error))
+            { strcpy(reader.view.error, reader.error); reader.view.indexing = false; ++reader.view.revision; }
+        }
+        else
+        {
+            unsigned pages = reader.complete ? reader.count : 0;
+            reader.view.pages = pages;
+            reader.view.indexing = !reader.complete;
+            if (foreground && target_ready() && (!reader.view.ready || reader.view.page != reader.wanted + 1)) show_page();
+            if (foreground) position_save();
+        }
+    }
+    if (reader.error[0] || !compute_step(false)) return UI_READER_WORK_IDLE;
+    return foreground && ui_reader_waiting() && (reader.restoring || !target_ready()) ?
+        UI_READER_WORK_TARGET : UI_READER_WORK_BACKGROUND;
 }
 
 void ui_reader_cancel_pending(void)
@@ -652,40 +792,17 @@ void ui_reader_cancel_pending(void)
     }
 }
 
-void ui_reader_process(void)
-{
-    if (document_view_active()) { document_view_process(true); return; }
-    index_process(true);
-    if (!reader.opened || reader.view.error[0]) return;
-    if (reader.restoring)
-    {
-        if (reader.complete || reader.anchor < reader.offsets[reader.count])
-        {
-            unsigned lo = 0, hi = reader.count;
-            while (lo + 1 < hi)
-            {
-                unsigned mid = lo + (hi - lo) / 2;
-                if (reader.offsets[mid] <= reader.anchor) lo = mid;
-                else hi = mid;
-            }
-            reader.wanted = lo;
-            reader.restoring = false;
-        }
-    }
-    if (!reader.restoring)
-    {
-        if (reader.complete && reader.wanted >= reader.count) reader.wanted = reader.count - 1;
-        if (reader.wanted < reader.count && (!reader.view.ready || reader.view.page != reader.wanted + 1))
-            show_page();
-    }
-}
-
 void ui_reader_seek(unsigned page)
 {
     if (document_view_active()) { document_view_seek(page); return; }
     if (!reader.view.ready || reader.view.error[0] || !page) return;
     if (reader.complete && page > reader.count) page = reader.count;
     if (page > MAX_PAGES) page = MAX_PAGES;
+    if (reader.wanted != page - 1)
+    {
+        reader.direction = page - 1 > reader.wanted ? 1 : -1;
+        reader.prepare_blocked = false;
+    }
     reader.wanted = page - 1;
 }
 

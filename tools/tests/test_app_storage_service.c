@@ -7,6 +7,9 @@
 
 #define RT_NAME_MAX 16
 #define RT_THREAD_PRIORITY_MAX 32
+#ifndef RT_TICK_PER_SECOND
+#define RT_TICK_PER_SECOND 1000
+#endif
 #define RT_EOK 0
 #define RT_ENOSYS 38
 #define RT_WAITING_FOREVER (-1)
@@ -46,6 +49,10 @@ static uint32_t card_session = 7;
 static bool card_available = true, ui_ready;
 static unsigned pins, subscriptions, detached, cleanup_calls;
 static bool fail_thread_start;
+#ifndef EPD_TEST_EXTERNAL_TICK
+static uint32_t rt_tick_get(void) { return 0; }
+#endif
+bool epd_app_summary_read(const char *id, char *text, size_t capacity);
 
 static rt_base_t rt_hw_interrupt_disable(void) { return 0; }
 static void rt_hw_interrupt_enable(rt_base_t level) { (void)level; }
@@ -108,11 +115,35 @@ int main(void)
     epd_background_t definition = {module_worker, 4096, 22, true, NULL, module_ui, NULL};
     epd_service_t *service = app_service_start("books", &definition, &pins);
     assert(service && pins == 1 && subscriptions == 1);
+    char snapshot[96], tiny[1];
+    uint32_t revision = epd_app_summary_revision();
+    assert(epd_app_summary_read("books", snapshot, sizeof(snapshot)) && !snapshot[0]);
+    epd_service_publish_summary(service, "Reading chapter one");
+    assert(epd_app_summary_revision() != revision);
+    revision = epd_app_summary_revision();
+    epd_service_publish_summary(service, "Reading chapter one");
+    assert(epd_app_summary_revision() == revision);
+    assert(epd_app_summary_read("books", snapshot, sizeof(snapshot)));
+    assert(!strcmp(snapshot, "Reading chapter one"));
+    char large_snapshot[1024];
+    memset(large_snapshot, 'X', sizeof(large_snapshot));
+    assert(epd_app_summary_read("books", large_snapshot, sizeof(large_snapshot)));
+    assert(!strcmp(large_snapshot, "Reading chapter one"));
+    assert(large_snapshot[sizeof("Reading chapter one")] == 'X');
+    assert(epd_app_summary_read("books", tiny, sizeof(tiny)) && !tiny[0]);
+    assert(!epd_app_summary_read("unknown", snapshot, sizeof(snapshot)) && !snapshot[0]);
+    assert(!epd_app_summary_read("books", NULL, 2));
+    assert(!epd_app_summary_read("books", snapshot, 0));
     card_available = false;
     assert(epd_service_cancelled(service));
     assert(epd_service_wait(service, 0) == EPD_SERVICE_STOP);
     app_service_process();
     assert(!cleanup_calls && pins == 1);
+    assert(epd_app_summary_revision() != revision);
+    assert(!epd_app_summary_read("books", snapshot, sizeof(snapshot)) && !snapshot[0]);
+    revision = epd_app_summary_revision();
+    epd_service_publish_summary(service, "Late publication");
+    assert(epd_app_summary_revision() == revision);
     mock_thread.entry(mock_thread.parameter);
     assert(!subscriptions && pins == 1);
     app_service_process();

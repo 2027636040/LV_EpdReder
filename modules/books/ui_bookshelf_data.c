@@ -33,7 +33,9 @@ typedef struct
 
 static ui_bookshelf_book_t *books;
 static uint32_t order;
-static unsigned char saved_slots[BOOKSHELF_MAX_ITEMS];
+static unsigned char saved_slots[BOOKSHELF_MAX_ITEMS + 1];
+static ui_bookshelf_book_t external_book;
+static bool external_valid;
 static unsigned count;
 static bool storage_ready;
 
@@ -113,7 +115,9 @@ static uint32_t hash(const void *data, size_t length)
 
 void ui_bookshelf_cache_path(unsigned index, char *out, size_t size, const char *suffix)
 {
-    const char *path = books[index].file.path;
+    const ui_bookshelf_book_t *book = ui_bookshelf_book(index);
+    if (!book) { if (size) out[0] = 0; return; }
+    const char *path = book->file.path;
     const char *relative = storage_relative_path(path);
     char relative_name[32];
     snprintf(relative_name, sizeof(relative_name), "%s-%08lx.%s",
@@ -125,15 +129,17 @@ void ui_bookshelf_cache_path(unsigned index, char *out, size_t size, const char 
 
 static bool load_slot(unsigned index, const char *slot, history_t *record)
 {
+    const ui_bookshelf_book_t *book = ui_bookshelf_book(index);
+    if (!book) return false;
     char path[64];
     ui_bookshelf_cache_path(index, path, sizeof(path), slot);
     storage_lock();
     int fd = storage_file_recover(path) ? open(path, O_RDONLY) : -1;
     bool legacy = false;
-    if (fd < 0 && storage_app_available("books") && !strcmp(storage_path_root(books[index].file.path), STORAGE_SD_ROOT) &&
+    if (fd < 0 && storage_app_available("books") && !strcmp(storage_path_root(book->file.path), STORAGE_SD_ROOT) &&
         storage_available(STORAGE_SD))
     {
-        const char *relative = storage_relative_path(books[index].file.path);
+        const char *relative = storage_relative_path(book->file.path);
         snprintf(path, sizeof(path), STORAGE_SD_ROOT "/.epd_reader/%08lx.%s",
                  (unsigned long)hash(relative, strlen(relative)), slot);
         fd = open(path, O_RDONLY);
@@ -144,7 +150,7 @@ static bool load_slot(unsigned index, const char *slot, history_t *record)
     close(fd);
     bool integrity = n == sizeof(*record) && record->magic == HISTORY_MAGIC &&
                      record->checksum == hash(record, offsetof(history_t, checksum));
-    if (n == sizeof(legacy_history_t) && record->magic == HISTORY_LEGACY_MAGIC && books[index].file.format == 0)
+    if (n == sizeof(legacy_history_t) && record->magic == HISTORY_LEGACY_MAGIC && book->file.format == 0)
     {
         legacy_history_t old;
         memcpy(&old, record, sizeof(old));
@@ -158,13 +164,13 @@ static bool load_slot(unsigned index, const char *slot, history_t *record)
         legacy = true;
     }
     bool ok = integrity &&
-           record->size == books[index].file.size && record->modified == books[index].file.modified &&
+           record->size == book->file.size && record->modified == book->file.modified &&
            memchr(record->path, 0, sizeof(record->path)) &&
-           !strcmp(storage_relative_path(record->path), storage_relative_path(books[index].file.path)) &&
-           (books[index].file.format != 0 || record->position.offset <= record->size) &&
+           !strcmp(storage_relative_path(record->path), storage_relative_path(book->file.path)) &&
+           (book->file.format != 0 || record->position.offset <= record->size) &&
            record->position.progress <= 100 &&
-           (books[index].file.format == 0 || (record->position.document_version == DOCUMENT_CONVERSION_VERSION &&
-             record->position.document_kind == books[index].file.format));
+           (book->file.format == 0 || (record->position.document_version == DOCUMENT_CONVERSION_VERSION &&
+             record->position.document_kind == book->file.format));
     if (ok && legacy)
     {
         ui_bookshelf_cache_path(index, path, sizeof(path), slot);
@@ -236,13 +242,80 @@ int ui_bookshelf_refresh(void)
 
 unsigned ui_bookshelf_count(void) { return count; }
 bool ui_bookshelf_storage_ready(void) { return storage_ready; }
-const ui_bookshelf_book_t *ui_bookshelf_book(unsigned index) { return index < count ? &books[index] : NULL; }
+const ui_bookshelf_book_t *ui_bookshelf_book(unsigned index)
+{
+    if (index == BOOKSHELF_MAX_ITEMS) return external_valid ? &external_book : NULL;
+    return index < count ? &books[index] : NULL;
+}
+
+bool ui_bookshelf_include_path(const char *path, unsigned *index)
+{
+    if (!path || !index || strlen(path) >= sizeof(external_book.file.path) ||
+        !ui_bookshelf_flush()) return false;
+    bookshelf_item_t file = {0};
+    storage_lock();
+    struct stat st = {0};
+    bool ok = !storage_changing() && storage_path_available(path) &&
+              stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size >= 0 &&
+              (uint64_t)st.st_size <= UINT32_MAX;
+    if (ok)
+    {
+        file.format = document_format(path, false);
+        file.size = (uint32_t)st.st_size;
+        file.modified = (uint32_t)st.st_mtime;
+        ok = file.format != DOCUMENT_UNKNOWN;
+        if (ok && !strcmp(storage_path_root(path), STORAGE_FLASH_ROOT))
+            ok = storage_file_signature(path, &file.modified);
+    }
+    storage_unlock();
+    if (!ok) return false;
+    for (unsigned i = 0; i < count; ++i)
+        if (!strcmp(books[i].file.path, path) && books[i].file.size == file.size &&
+            books[i].file.modified == file.modified)
+        { *index = i; return true; }
+    if (!writer.queue)
+    {
+        writer.queue = rt_workqueue_sysq();
+        if (!writer.queue) return false;
+        rt_work_init(&writer.work, history_work, NULL);
+    }
+    memcpy(file.path, path, strlen(path) + 1);
+    const char *name = strrchr(path, '/');
+    name = name ? name + 1 : path;
+    const char *dot = strrchr(name, '.');
+    size_t length = dot ? (size_t)(dot - name) : strlen(name);
+    if (length >= sizeof(file.name))
+    {
+        length = sizeof(file.name) - 1;
+        while (length && ((unsigned char)name[length] & 0xc0) == 0x80) --length;
+    }
+    memcpy(file.name, name, length);
+    memset(&external_book, 0, sizeof(external_book));
+    external_book.file = file;
+    external_valid = true;
+    *index = BOOKSHELF_MAX_ITEMS;
+    history_t a, b;
+    bool a_ok = load_slot(*index, "a", &a), b_ok = load_slot(*index, "b", &b);
+    history_t *latest = a_ok ? &a : NULL;
+    if (b_ok && (!latest || (int32_t)(b.sequence - latest->sequence) > 0)) latest = &b;
+    saved_slots[*index] = latest == &b ? 1 : 0;
+    if (latest)
+    {
+        external_book.position = latest->position;
+        external_book.order = latest->sequence;
+        if (!order || (int32_t)(latest->sequence - order) > 0) order = latest->sequence;
+    }
+    format_last_read(&external_book);
+    return true;
+}
 
 bool ui_bookshelf_save(unsigned index, const ui_reading_position_t *position)
 {
-    if (index >= count) return false;
-    books[index].position = *position;
-    format_last_read(&books[index]);
+    ui_bookshelf_book_t *book = index == BOOKSHELF_MAX_ITEMS && external_valid ? &external_book :
+                              index < count ? &books[index] : NULL;
+    if (!book) return false;
+    book->position = *position;
+    format_last_read(book);
     rt_base_t level = rt_hw_interrupt_disable();
     bool switching = writer.dirty && writer.index != index;
     rt_hw_interrupt_enable(level);
@@ -251,11 +324,11 @@ bool ui_bookshelf_save(unsigned index, const ui_reading_position_t *position)
     memset(&record, 0, sizeof(record));
     record.magic = HISTORY_MAGIC;
     record.sequence = ++order;
-    books[index].order = order;
+    book->order = order;
     if (!storage_app_available("books")) return false;
-    record.size = books[index].file.size;
-    record.modified = books[index].file.modified;
-    memcpy(record.path, books[index].file.path, sizeof(record.path));
+    record.size = book->file.size;
+    record.modified = book->file.modified;
+    memcpy(record.path, book->file.path, sizeof(record.path));
     record.position = *position;
     record.checksum = hash(&record, offsetof(history_t, checksum));
     char path[64];
@@ -286,6 +359,8 @@ void ui_bookshelf_close(void)
     memset(&writer, 0, sizeof(writer));
     lv_free(books);
     books = NULL;
+    memset(&external_book, 0, sizeof(external_book));
+    external_valid = false;
     count = order = 0;
     storage_ready = false;
 }

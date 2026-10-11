@@ -2,6 +2,7 @@
 #define BOOKS_UI_H
 #include "platform/epd_app.h"
 #include "platform/epd_input.h"
+#include "platform/app_content.h"
 #include "ui_reader.h"
 #include "ui_bookshelf_data.h"
 #include "ui_settings.h"
@@ -52,6 +53,7 @@ enum { UI_PAGE_BOOKSHELF, UI_PAGE_READER, UI_PAGE_TEXT_SETTINGS, UI_PAGE_COUNT }
 typedef struct
 {
     unsigned id, bookshelf_first;
+    uint32_t content_generation;
     bool foreground;
     lv_obj_t *screen;
     lv_group_t *group;
@@ -95,7 +97,8 @@ void object_visible(lv_obj_t *object, bool visible);
 void focus_restore(unsigned index);
 void popup_open(const char *text, const char *detail);
 void popup_close(void);
-void books_process(void);
+/* True requests a short UI wake for required page computation, not prefetch. */
+bool books_process(void);
 void bookshelf_start(lv_obj_t *screen);
 void bookshelf_resume(void);
 void bookshelf_pause(void);

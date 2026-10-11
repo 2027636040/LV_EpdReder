@@ -23,6 +23,7 @@ AddLCPU(SIFLI_SDK,rtconfig.CHIP,"../../src/lcpu_img.c")
 SifliEnv()
 # NOR metadata wear levelling; the SDK port otherwise defaults to disabled (-1).
 rtconfig.CFLAGS += ' -DLFS_BLOCK_CYCLES=500'
+rtconfig.LFLAGS += ['-Wl,--build-id=sha1']
 
 TARGET = rtconfig.OUTPUT_DIR + rtconfig.TARGET_NAME + '.' + rtconfig.TARGET_EXT
 env = Environment(tools = ['mingw'],
@@ -34,6 +35,10 @@ env = Environment(tools = ['mingw'],
 env.PrependENVPath('PATH', rtconfig.EXEC_PATH)
 if ARGUMENTS.get('HANG_DIAG') == '1':
     env.Append(CPPDEFINES=['EPD_HANG_DIAG'])
+if ARGUMENTS.get('DIAG_FIXTURES') == '1':
+    env.Append(CPPDEFINES=['EPD_DIAG_FIXTURES'])
+if ARGUMENTS.get('APP_RECOVERY') == '1':
+    env.Append(CPPDEFINES=['APP_RECOVERY=1'])
    
 # Prepare building environment
 objs = PrepareBuilding(env)
@@ -76,6 +81,9 @@ env['APP_NM'] = os.path.join(rtconfig.EXEC_PATH, 'arm-none-eabi-nm.exe')
 env['APP_JOBS'] = GetOption('num_jobs')
 packages = add_selected_packages(env, SIFLI_SDK, '..', list(dict.fromkeys(apps + preinstall)),
                                 dictionary=ARGUMENTS.get('WORDS_DICTIONARY'))
+from debug_artifacts import add_archive, add_fixture_modules
+fixtures = add_fixture_modules(env, '..') if ARGUMENTS.get('DIAG_FIXTURES') == '1' else None
+add_archive(env, os.path.abspath('..'), packages, fixtures, firmware_built=True)
 from lfs_image import add_image
 fs_bin = add_image(env, SIFLI_SDK, ARGUMENTS.get('STORAGE_IMPORT'),
                    [packages[name] for name in preinstall])

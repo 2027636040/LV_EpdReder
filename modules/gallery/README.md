@@ -31,7 +31,7 @@ JPEGD 与 LVGL 通过 SDK 的 GPU 锁串行使用共享硬件。解码线程以�
 
 源图由解码器检查编码和尺寸，缓冲区按实际需要申请；尺寸计算无法用目标整数类型表示或内存申请失败时结束任务并释放资源。PNG 不另设源图边长、总像素、块内存或会话累计内存上限。源文件统一通过 32 KiB、32 字节对齐的 RAM1 读缓冲访问，解码器的小块读取和跳过操作复用缓冲。
 
-热点工作区按申请时的可用空间优先动态分配到 RAM0，单次解码的 RAM0 分配预算为 64 KiB，并在每次申请前留下至少 40 KiB 的系统堆余量；其他线程仍可继续申请，因此该余量不是全局预留区。空间不足时回退 RAM1。PNG 的 32 KiB 解压字典优先取得这部分预算。所有工作区均在解码结束或取消时释放。
+PNG 的 32 KiB 解压字典在其他工作区之前直接尝试申请 RAM0；实际申请失败时回退 RAM1，不受 40 KiB 系统堆余量条件限制。其余热点工作区保持原有策略：包括解压字典在内，单次解码的 RAM0 分配预算为 64 KiB，普通申请还要求分配后至少留下 40 KiB 的系统堆余量，不满足时使用 RAM1。其他线程仍可继续申请，因此该余量不是全局预留区。所有工作区均在解码结束或取消时释放。
 
 | 缓冲 | 用量 |
 |---|---:|
@@ -79,11 +79,29 @@ scons -C modules APPS=gallery -j8
 
 上板检查：两种存储读取；横竖图等比缩放和 16 灰阶；透明与交错 PNG；大 JPEG；读取中返回或拔卡；反复打开退出后检查 RAM0/RAM1 是否回收。使用同一原图分别比较首次打开与出现 `gray16 cache hit` 的再次打开；修改同路径图片内容后应重新解码。
 
-串口的 `JPEGD hardware` 和 `JPEG gray MCU streaming, scale=1/N` 区分两条 JPEG 路径，PNG 日志说明实际通道数及是否交错。`decode` 记录格式解码、补读文件尾和灰度归一化阶段的墙上时间；其中的 `read` 累计原文件读取及存储锁等待，不是纯 CPU 时间。`RAM0 peak` 统计图库解码热点分配器的峰值，不含线程栈和模块代码。`image ready, gray16` 记录从打开源文件到 RGB565 显示缓冲准备完成的时间，不包含缓存打包、缓存写盘和面板刷新时间。
+串口的 `JPEGD hardware` 和 `JPEG gray MCU streaming, scale=1/N` 区分两条 JPEG 路径，PNG 日志说明实际通道数及是否交错。`PNG stages` 将 libpng 调用拆分为以下时间：
+
+- `codec`：libpng 的解压、行滤波还原、格式转换及 PNG 块校验，扣除其内部的文件读取与源文件 CRC 计算时间。
+- `scale`：逐行的亮度转换及缩放累加，包含普通 PNG 的目标灰度行生成；不包含 Adam7 遍历完成后的最终灰度归一化。
+- `read`：libpng 调用期间的原文件读取和存储锁等待。
+- `source_crc`：libpng 调用期间为图片缓存计算的源文件 CRC，不是 PNG 块校验。
+- `window`：实际交给解码器的 32 KiB 解压字典位于 `RAM0` 或 `RAM1`；`unused` 表示解码器未采用预留字典。
+
+这些计时使用系统 tick，包含各阶段被其他线程抢占的时间，不是纯 CPU 时间，也不包含该阶段以外的所有工作。图库的 `decode` 从缓存查找结束开始，记录格式识别、解码、补读文件尾、灰度归一化和关闭文件；同行的 `read`、`source_crc` 使用相同统计范围，不再混入之前的缓存查找耗时。`RAM0 peak` 统计图库解码热点分配器的峰值，不含线程栈和模块代码。`image ready, gray16` 记录从打开源文件到 RGB565 显示缓冲准备完成的时间，不包含缓存打包、缓存写盘和面板刷新时间。
+
+Linux/WSL 主机测试使用实际解码器源码，启用 AddressSanitizer 和 UndefinedBehaviorSanitizer：
+
+```sh
+python3 modules/common/image/tests/test_raster.py
+# 可选：真实 PNG 与修改前保存的 620×966 范围内等比缩放灰度结果比较
+python3 modules/common/image/tests/test_raster.py --sample sample.png --reference before.gray
+```
+
+测试覆盖像素结果、RAM0 解压字典分配、RAM1 回退、申请失败清理和损坏 PNG；提供真实大图时还测试解码期间取消与源存储不可用。主机测试不代表上板速度。测量首开解码时，应选尚未缓存的图片路径，确认日志出现 `PNG stages` 而非 `gray16 cache hit`。
 
 ## 依赖
 
-`third_party/libpng` 来自 [libpng v1.6.58](https://github.com/pnggroup/libpng/tree/v1.6.58)，`pnglibconf.h` 是图库的只读构建配置。
-`third_party/zlib` 来自 [zlib 1.3.2](https://zlib.net/)，构建使用 `Z_PREFIX` 避免与 SDK 的 CRC 等符号冲突。依赖许可证随源码保留；未启用 LodePNG，也不替换 UI 资源的 EZIP 路径。
+`modules/common/image/third_party/libpng` 来自 [libpng v1.6.58](https://github.com/pnggroup/libpng/tree/v1.6.58)，`pnglibconf.h` 是公共图片组件的只读构建配置。
+`modules/common/image/third_party/zlib` 来自 [zlib 1.3.2](https://zlib.net/)，构建使用 `Z_PREFIX` 避免与 SDK 的 CRC 等符号冲突。依赖许可证随源码保留；未启用 LodePNG，也不替换 UI 资源的 EZIP 路径。
 
-`third_party/tjpgd` 来自 [ChaN TJpgDec R0.03](https://elm-chan.org/fsw/tjpgd/arc/tjpgd3.zip)，配置和灰度饱和修正见该目录 README。图库与书架通过共享图片组件各自编译该副本，不修改 SDK 的 LVGL 解码器。
+`modules/common/image/third_party/tjpgd` 来自 [ChaN TJpgDec R0.03](https://elm-chan.org/fsw/tjpgd/arc/tjpgd3.zip)，配置和灰度饱和修正见该目录 README。图库与书架通过共享图片组件各自编译该副本，不修改 SDK 的 LVGL 解码器。

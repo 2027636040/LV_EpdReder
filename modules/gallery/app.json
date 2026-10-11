@@ -1,7 +1,8 @@
 {
   "abi": 1,
   "id": "gallery",
-  "version": 6,
+  "version": 9,
   "data_version": 1,
-  "name": "图库"
+  "name": "图库",
+  "file_extensions": ["png", "jpg", "jpeg"]
 }

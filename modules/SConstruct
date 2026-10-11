@@ -37,4 +37,6 @@ env = Environment(tools=[], ENV=dict(os.environ), build_dir=str(firmware), APP_N
                   APP_JOBS=GetOption('num_jobs'))
 SConsignFile(str(firmware / '.sconsign-apps.dblite'))
 packages = add_selected_packages(env, sdk, repo, names, dictionary=ARGUMENTS.get('WORDS_DICTIONARY'))
-Default([node for root, nodes in packages.values() for node in nodes])
+from debug_artifacts import add_archive
+symbols = add_archive(env, repo, packages)
+Default([node for root, nodes in packages.values() for node in nodes] + list(symbols))

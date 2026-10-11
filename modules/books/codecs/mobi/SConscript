@@ -1,9 +1,14 @@
 from building import *
 from pathlib import Path
+import os
 
 cwd = Path(GetCurrentDir())
 vendor = cwd.parents[1] / 'third_party' / 'libmobi' / 'src'
 env = GetCurrentEnv()
+# Diagnostic builds only: PowerShell $env:BOOK_MOBI_MEASURE = '1'.
+# Clear with Remove-Item Env:BOOK_MOBI_MEASURE before a baseline build.
+if os.environ.get('BOOK_MOBI_MEASURE') == '1':
+    env.Append(CPPDEFINES=['BOOK_MOBI_MEASURE=1'])
 env.Append(CCFLAGS=' -Os -fvisibility=hidden -ffunction-sections -fdata-sections')
 env.Append(LINKFLAGS=' -Wl,--gc-sections -Wl,-u,book_module_profile -Wl,--version-script=' + str(cwd / 'exports.map'))
 env.Append(LINKFLAGS=' ' + ' '.join(flag for flag in env.subst('$CCFLAGS').split()
@@ -15,6 +20,9 @@ objects = DefineGroup('bk_mobi', Glob('*.c'), depend=[''],
     CPPDEFINES=['BUILD_DLMODULE', 'HAVE_CCONFIG_H', 'BOOK_MOBI', 'RT_USING_DFS',
                 'MOBI_DEBUG=0', 'MOBI_DEBUG_ALLOC=0', 'HAVE_STRDUP'], LIBS=['gcc'])
 for name in names:
+    defines = list(env.get('CPPDEFINES', []))
+    if name == 'util':
+        defines += ['MOBI_MEASURE_DECOMPRESSION']
     objects += env.Object(str(cwd / 'output' / 'vendor' / (name + '.o')),
-                          str(vendor / (name + '.c')))
+                          str(vendor / (name + '.c')), CPPDEFINES=defines)
 Return('objects')

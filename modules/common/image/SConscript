@@ -2,7 +2,7 @@ from building import *
 import os
 
 cwd = GetCurrentDir()
-vendor = os.path.abspath(os.path.join(cwd, '..', '..', 'gallery', 'third_party'))
+vendor = os.path.join(cwd, 'third_party')
 png = os.path.join(vendor, 'libpng')
 zlib = os.path.join(vendor, 'zlib')
 paths = [cwd, png, zlib, os.path.join(vendor, 'tjpgd')]

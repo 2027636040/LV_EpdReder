@@ -8,15 +8,16 @@ bool document_view_open(unsigned book);
 void document_view_close(void);
 bool document_view_active(void);
 const ui_reader_view_t *document_view_get(void);
-void document_view_process(bool foreground);
-void document_view_prepare(void);
+/* Same scheduling result as TXT; waiting for data/images is not target work.
+ * commit=false preserves the visible revision/position. */
+ui_reader_work_t document_view_step(uint32_t budget_ms, bool foreground, bool commit);
 bool document_view_save(void);
 bool document_view_reflow(void);
 bool document_view_settings_changed(void);
 void document_view_seek(unsigned page);
 void document_view_cancel_pending(void);
 bool document_view_waiting(void);
-/* Bind only when the screen is idle. The new subtree is complete before swap. */
+/* Bind prepared content only when the screen is idle; reuse existing objects. */
 bool document_view_bind(lv_obj_t *body);
 void document_view_detach(void);
 unsigned document_view_toc_count(void);

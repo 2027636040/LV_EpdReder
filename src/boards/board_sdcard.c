@@ -4,7 +4,7 @@
 
 void board_sdcard_prepare(void)
 {
-#ifdef PKG_USING_EPD_SDCARD
+#if defined(PKG_USING_EPD_SDCARD) && !defined(BSP_SD_DETECT_USING_IOEX)
     HAL_PIN_Set(PAD_PA00 + SD_INSERT_DETECT_PIN, GPIO_A0 + SD_INSERT_DETECT_PIN, PIN_PULLUP, 1);
     rt_pin_mode(SD_INSERT_DETECT_PIN, PIN_MODE_INPUT_PULLUP);
 #endif

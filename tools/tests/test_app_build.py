@@ -59,6 +59,19 @@ class AppBuildTests(unittest.TestCase):
             self.assertEqual(native_apps.add_selected_packages(self.env, self.root, self.root, []), {})
         self.assertEqual(self.env.commands, [])
 
+    def test_weread_shared_sources_invalidate_package(self):
+        self.assertEqual(native_apps.select_apps('weread'), ['weread'])
+        paths = ('modules/common/http/epd_http.c', 'modules/common/reader/reader_view.c',
+                 'modules/books/document/document.c', 'modules/books/formats/book_markup.c')
+        for relative in paths:
+            source = self.root / relative
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.touch()
+        native_apps.add_package(self.env, self.root, self.root, 'weread', {})
+        module = self.env.commands[0]
+        for relative in paths:
+            self.assertIn(str(self.root / relative), module[1])
+
     def test_only_selected_sources_are_required(self):
         module = self.root / 'modules/weather'
         module.mkdir(parents=True)
@@ -82,12 +95,14 @@ class AppBuildTests(unittest.TestCase):
         module, package = self.env.commands
         firmware = str(Path(self.env['build_dir']) / 'main.elf')
         self.assertNotIn(firmware, module[1])
+        self.assertEqual(module[0], [str(self.root / 'modules/weather/output/weather.so'),
+                                      str(self.root / 'modules/weather/output/weather.so.nostrip')])
         self.assertIn(firmware, package[1])
         self.assertIn(str(Path(self.env['build_dir']) / 'rtua.py'), module[1])
         self.assertNotIn(str(self.root / 'project/rtua.py'), module[1])
         self.assertEqual(root, Path(self.env['build_dir']) / 'app-resources/weather')
         self.assertEqual(nodes, package[0])
-        self.assertEqual(self.env.precious, nodes)
+        self.assertEqual(self.env.precious, module[0] + nodes)
         with patch.object(native_apps, 'verify', side_effect=ValueError('Unexported imports')), \
                 patch.object(native_apps, 'build_package') as pack:
             with self.assertRaisesRegex(ValueError, 'Unexported imports'):
@@ -101,6 +116,20 @@ class AppBuildTests(unittest.TestCase):
         dictionary.touch()
         with self.assertRaisesRegex(ValueError, 'cet4.wdb.json'):
             native_apps.add_words_package(self.env, self.root, self.root, dictionary=dictionary)
+
+    def test_package_without_icon_uses_platform_default(self):
+        root, _ = native_apps.add_package(self.env, self.root, self.root, 'board', {})
+        package = self.env.commands[-1]
+
+        def stage(*args):
+            self.assertIsNone(args[5])
+            args[3].mkdir()
+            return {}
+
+        with patch.object(native_apps, 'verify'), \
+                patch.object(native_apps, 'build_package', side_effect=stage):
+            self.assertEqual(package[2](None, None, self.env), 0)
+        self.assertTrue(root.is_dir())
 
     def test_words_packages_prebuilt_unified_dictionary_and_provenance(self):
         module = self.root / 'modules/words'

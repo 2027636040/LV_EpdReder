@@ -43,6 +43,7 @@ def generate(repo, build, config):
               repo / 'src/ui/platform/app_runtime.c', repo / 'src/ui/platform/epd_input.h',
               repo / 'src/ui/platform/app_memory.h', repo / 'src/ui/platform/app_memory.c',
               repo / 'src/ui/platform/app_library.c', repo / 'src/ui/platform/app_package.h',
+              repo / 'src/ui/platform/app_content.h',
               repo / 'src/platform/epd_memory.h', repo / 'src/platform/epd_memory.c',
               repo / 'src/platform/epd_tls_config.h',
               repo / 'src/platform/epd_image.h', repo / 'src/platform/epd_image.c',

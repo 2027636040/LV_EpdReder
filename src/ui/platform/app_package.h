@@ -17,6 +17,7 @@ typedef enum
 
 /* Callers hold storage_lock; these functions never load or execute a module. */
 bool app_package_metadata(const char *root, const char *id, epd_app_entry_t *entry);
+bool app_package_handles_path(const char *root, const char *path);
 app_package_status_t app_package_verify(const char *root, const char *id, bool all_files);
 app_package_status_t app_package_verify_library(const char *root, const char *id,
                                                const char *name, size_t *load_peak);

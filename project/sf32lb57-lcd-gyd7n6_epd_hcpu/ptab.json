@@ -1,0 +1,84 @@
+[
+    {"version": "2"},
+    {
+        "mem": "flash2",
+        "base": "0x12000000",
+        "regions": [
+            {
+                "offset": "0x00020000",
+                "max_size": "0x00200000",
+                "tags": [
+                    "HCPU_FLASH_CODE"
+                ],
+                "name": "main:1",
+                "type": ["app_img", "app_exec"]
+            },
+            {
+                "offset": "0x00220000",
+                "max_size": "0x00800000",
+                "tags": [
+                    "BUILTIN_RESOURCE"
+                ],
+                "name": "main:2",
+                "type": ["app_img"]
+            },
+            {
+                "offset": "0x00A20000",
+                "max_size": "0x00020000",
+                "name": "acpu",
+                "core": "acpu",
+                "type": ["app_img", "app_exec"]
+            },
+            {
+                "offset": "0x00A40000",
+                "max_size": "0x00004000",
+                "name": "ble_store",
+                "tags": [
+                    "KVDB_BLE_REGION"
+                ]
+            },
+            {
+                "offset": "0x00A44000",
+                "max_size": "0x00040000",
+                "name": "wave_table",
+                "tags": [
+                    "CUSTOM_EPD_WAVE_TABLE"
+                ]
+            },
+            {
+                "offset": "0x00A84000",
+                "max_size": "0x0057C000",
+                "name": "fs_root",
+                "tags": [
+                    "FS_REGION"
+                ]
+            }
+        ]
+    },
+    {
+        "mem": "psram1",
+        "base": "0x60000000",
+        "regions": [
+            {
+                "offset": "0x00000000",
+                "max_size": "0x01000000",
+                "tags": [
+                    "PSRAM_DATA"
+                ]
+            }
+        ]
+    },
+    {
+        "mem": "hpsys_ram",
+        "base": "0x20000000",
+        "regions": [
+            {
+                "offset": "0x00000000",
+                "max_size": "0x0007F700",
+                "tags": [
+                    "HCPU_RAM_DATA"
+                ]
+            }
+        ]
+    }
+]

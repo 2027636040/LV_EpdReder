@@ -1,9 +1,14 @@
 #include "gallery.h"
+#include "platform/app_content.h"
 #include "src/draw/lv_image_decoder_private.h"
 #include <string.h>
 #include <stdio.h>
 
 EPD_APP_DEFINE("gallery");
+
+static char launch_path[STORAGE_PATH_MAX], picture_path[STORAGE_PATH_MAX];
+static uint32_t launch_session, picture_session;
+static rt_err_t launch_error;
 
 typedef struct
 {
@@ -14,7 +19,9 @@ typedef struct
     gallery_entry_t entries[GALLERY_ROWS];
     unsigned first, count, selected_row, depth, offsets[32], start_attempts;
     uint32_t request;
-    bool started;
+    bool started, open_content;
+    rt_err_t content_error;
+    uint32_t content_session;
 } browser_t;
 
 typedef struct
@@ -23,6 +30,7 @@ typedef struct
     lv_timer_t *timer;
     char path[STORAGE_PATH_MAX];
     uint32_t request;
+    uint32_t card_session;
     gallery_result_t *displayed;
 } viewer_t;
 
@@ -91,7 +99,39 @@ static void row_clicked(lv_event_t *event)
         page->first = page->selected_row = 0;
         browser_scan(page);
     }
-    else gui_app_create_page_for_app_ext("gallery", "picture", viewer_message, page->selected, sizeof(viewer_t));
+    else
+    {
+        memcpy(picture_path, page->selected, sizeof(picture_path));
+        picture_session = storage_card_session();
+        if (gui_app_create_page_for_app_ext("gallery", "picture", viewer_message, NULL, sizeof(viewer_t)) != RT_EOK)
+        { epd_app_text(page->empty, "图片页面打开失败"); visible(page->empty, true); }
+    }
+}
+
+static bool browser_open_content(browser_t *page)
+{
+    if (page->content_error)
+    {
+        epd_app_text(page->empty, app_content_error(page->content_error));
+        page->content_error = RT_EOK;
+        visible(page->empty, true);
+        return true;
+    }
+    if (!page->open_content || !page->started) return false;
+    page->open_content = false;
+    if (storage_changing() || !storage_path_available(page->selected) ||
+        (!strcmp(storage_path_root(page->selected), STORAGE_SD_ROOT) &&
+         !storage_session_valid(STORAGE_SD, page->content_session)))
+    {
+        epd_app_text(page->empty, "文件或存储已不可用");
+        visible(page->empty, true);
+        return true;
+    }
+    memcpy(picture_path, page->selected, sizeof(picture_path));
+    picture_session = page->content_session;
+    if (gui_app_create_page_for_app_ext("gallery", "picture", viewer_message, NULL, sizeof(viewer_t)) != RT_EOK)
+    { epd_app_text(page->empty, "图片页面打开失败"); visible(page->empty, true); }
+    return true;
 }
 
 static void list_page_clicked(lv_event_t *event)
@@ -135,7 +175,11 @@ static void browser_poll(lv_timer_t *timer)
     if (!page->started)
     {
         page->started = gallery_start();
-        if (page->started) browser_scan(page);
+        if (page->started)
+        {
+            browser_scan(page);
+            browser_open_content(page);
+        }
         else if (++page->start_attempts >= 20)
         {
             epd_app_text(page->empty, "图库服务启动失败");
@@ -199,10 +243,17 @@ static void browser_message(gui_app_msg_type_t message, void *parameter)
         page->timer = lv_timer_create(browser_poll, 100, page);
         lv_timer_pause(page->timer);
         page->started = gallery_start();
+        memcpy(page->selected, launch_path, sizeof(page->selected));
+        page->open_content = launch_path[0] != 0;
+        page->content_session = launch_session;
+        page->content_error = launch_error;
+        launch_path[0] = 0;
+        launch_error = RT_EOK;
     }
     else if (message == GUI_APP_MSG_ONRESUME)
     {
         epd_app_header_refresh(page->screen);
+        if (page->started && browser_open_content(page)) return;
         if (page->started && page->path[0])
         {
             page->request = gallery_submit(GALLERY_SCAN, page->path, page->first);
@@ -244,6 +295,16 @@ static void viewer_request(viewer_t *page)
 static void viewer_poll(lv_timer_t *timer)
 {
     viewer_t *page = lv_timer_get_user_data(timer);
+    if (storage_changing() || !storage_path_available(page->path) ||
+        (!strcmp(storage_path_root(page->path), STORAGE_SD_ROOT) &&
+         !storage_session_valid(STORAGE_SD, page->card_session)))
+    {
+        lv_timer_pause(timer);
+        gallery_cancel_request(page->request);
+        release_image(page);
+        epd_app_text(page->status, "文件或存储已不可用");
+        return;
+    }
     gallery_result_t *result = gallery_take(page->request);
     if (!result && !gallery_failed(page->request)) return;
     lv_timer_pause(timer);
@@ -268,7 +329,8 @@ static void viewer_message(gui_app_msg_type_t message, void *parameter)
     viewer_t *page = gui_app_this_page_memory();
     if (message == GUI_APP_MSG_ONSTART)
     {
-        snprintf(page->path, sizeof(page->path), "%s", (const char *)gui_app_this_page_userdata());
+        memcpy(page->path, picture_path, sizeof(page->path));
+        page->card_session = picture_session;
         page->screen = prepare("图库", NULL, NULL);
         const char *name = strrchr(page->path, '/');
         lv_obj_t *label = epd_app_label(page->screen, name ? name + 1 : page->path,
@@ -282,6 +344,14 @@ static void viewer_message(gui_app_msg_type_t message, void *parameter)
     else if (message == GUI_APP_MSG_ONRESUME)
     {
         epd_app_header_refresh(page->screen);
+        if (storage_changing() || !storage_path_available(page->path) ||
+            (!strcmp(storage_path_root(page->path), STORAGE_SD_ROOT) &&
+             !storage_session_valid(STORAGE_SD, page->card_session)))
+        {
+            release_image(page);
+            epd_app_text(page->status, "文件或存储已不可用");
+            return;
+        }
         if (!page->displayed) viewer_request(page);
     }
     else if (message == GUI_APP_MSG_ONPAUSE)
@@ -299,6 +369,8 @@ static void viewer_message(gui_app_msg_type_t message, void *parameter)
 
 int app_main(intent_t intent)
 {
-    (void)intent;
+    launch_error = app_content_receive(intent, launch_path, sizeof(launch_path));
+    if (launch_error == -ENOENT) launch_error = RT_EOK;
+    launch_session = storage_card_session();
     return gui_app_regist_msg_handler_ext("gallery", browser_message, NULL, sizeof(browser_t));
 }

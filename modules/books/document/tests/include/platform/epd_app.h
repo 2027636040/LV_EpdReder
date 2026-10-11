@@ -20,11 +20,16 @@ void *epd_app_library_symbol(void *, const char *);
 void epd_app_library_close(void *);
 size_t epd_app_psram_available(void);
 bool epd_app_font_prepare(const lv_font_t *, uint32_t, bool);
+const lv_draw_buf_t *epd_app_font_derived_acquire(const lv_font_t *, uint32_t, uint32_t, lv_cache_entry_t **);
+const lv_draw_buf_t *epd_app_font_derived_store(const lv_font_t *, uint32_t, uint32_t, const lv_draw_buf_t *, lv_cache_entry_t **);
+void epd_app_font_derived_release(lv_cache_entry_t *);
+void epd_app_font_derived_drop(const lv_font_t *);
 bool epd_service_cancelled(epd_service_t *);
 void epd_service_wake(epd_service_t *);
 uint32_t epd_service_wait(epd_service_t *, rt_int32_t);
 #define STORAGE_FLASH_ROOT "/flash"
 #define STORAGE_SD_ROOT "/sdcard"
+#define STORAGE_PATH_MAX 512
 typedef enum { STORAGE_FLASH, STORAGE_SD, STORAGE_COUNT } storage_volume_t;
 typedef struct { bool mounted; uint64_t total, used; } storage_info_t;
 const char *storage_path_root(const char *);
@@ -40,4 +45,7 @@ void storage_unlock(void);
 bool storage_mkdirs(const char *);
 bool storage_info(storage_volume_t, storage_info_t *);
 bool storage_file_signature(const char *, uint32_t *);
+bool storage_file_replace(const char *, const void *, size_t);
+bool storage_file_recover(const char *);
+bool storage_file_commit(const char *, const char *);
 #endif

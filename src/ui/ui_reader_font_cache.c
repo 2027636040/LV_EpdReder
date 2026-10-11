@@ -31,12 +31,15 @@ typedef struct font_binding
     descriptor_page_t **descriptors;
 } font_binding_t;
 
-typedef struct
+typedef struct glyph_item
 {
     lv_cache_slot_size_t slot;
     const lv_font_t *font;
-    uint32_t glyph;
+    uint32_t glyph, style;
+    bool derived;
     lv_draw_buf_t *buffer;
+    /* Links only existing LRU nodes, including invalidated held references. */
+    struct glyph_item *previous, *next;
 } glyph_item_t;
 
 static lv_cache_t *glyph_cache;
@@ -44,6 +47,8 @@ static font_binding_t *bindings;
 static struct rt_mutex descriptor_lock;
 static bool lock_initialized, preparing, prepare_adjacent;
 static unsigned glyph_count;
+static glyph_item_t *glyph_items;
+static size_t glyph_bytes;
 static size_t descriptor_bytes;
 static uint32_t descriptor_hits, descriptor_misses, bitmap_hits, bitmap_misses, prepared_count;
 
@@ -108,6 +113,8 @@ static lv_cache_compare_res_t glyph_compare(const glyph_item_t *a, const glyph_i
 {
     if (a->font != b->font) return (uintptr_t)a->font > (uintptr_t)b->font ? 1 : -1;
     if (a->glyph != b->glyph) return a->glyph > b->glyph ? 1 : -1;
+    if (a->derived != b->derived) return a->derived ? 1 : -1;
+    if (a->style != b->style) return a->style > b->style ? 1 : -1;
     return 0;
 }
 
@@ -116,6 +123,11 @@ static bool glyph_create(glyph_item_t *item, void *source)
     item->buffer = lv_draw_buf_dup_ex(lv_draw_buf_get_font_handlers(), source);
     if (!item->buffer) return false;
     lv_draw_buf_flush_cache(item->buffer, NULL);
+    item->previous = NULL;
+    item->next = glyph_items;
+    if (glyph_items) glyph_items->previous = item;
+    glyph_items = item;
+    glyph_bytes += item->slot.size;
     ++glyph_count;
     return true;
 }
@@ -125,6 +137,10 @@ static void glyph_free(glyph_item_t *item, void *unused)
     LV_UNUSED(unused);
     if (item->buffer)
     {
+        if (item->previous) item->previous->next = item->next;
+        else glyph_items = item->next;
+        if (item->next) item->next->previous = item->previous;
+        glyph_bytes -= item->slot.size;
         lv_draw_buf_destroy(item->buffer);
         --glyph_count;
     }
@@ -140,15 +156,91 @@ static size_t glyph_charge(uint32_t bytes)
 static bool glyph_room(uint32_t bytes, bool evict)
 {
     size_t charge = glyph_charge(bytes);
+    if (charge > GLYPH_BUDGET) return false;
     /* Keep descriptor growth possible after the bitmap budget fills. */
     size_t reserve = SHARED_RESERVE + DESCRIPTOR_BUDGET - descriptor_bytes;
     while (glyph_count >= GLYPH_NODE_LIMIT ||
            epd_app_psram_available() < 2u * bytes + reserve ||
-           lv_cache_get_free_size(glyph_cache, NULL) < charge)
+           GLYPH_BUDGET - glyph_bytes < charge)
     {
         if (!evict || !lv_cache_evict_one(glyph_cache, NULL)) return false;
     }
     return true;
+}
+
+/* descriptor_lock held. Drop preserves held pixels; they remain charged until
+ * their last reference is released, even after leaving the LRU search tree. */
+static void glyph_drop(const lv_font_t *font)
+{
+    glyph_item_t *next;
+    for (glyph_item_t *item = glyph_items; item; item = next)
+    {
+        next = item->next;
+        lv_cache_entry_t *entry = lv_cache_entry_get_entry(item, sizeof(*item));
+        if ((!font || (item->derived && item->font == font)) &&
+            !lv_cache_entry_is_invalid(entry)) lv_cache_drop(glyph_cache, item, NULL);
+    }
+}
+
+const lv_draw_buf_t *ui_reader_font_derived_acquire(const lv_font_t *font, uint32_t glyph,
+                                                  uint32_t style, lv_cache_entry_t **entry)
+{
+    if (!entry) return NULL;
+    *entry = NULL;
+    if (!font || !lock_initialized) return NULL;
+    rt_mutex_take(&descriptor_lock, RT_WAITING_FOREVER);
+    glyph_item_t key = {.font = font, .glyph = glyph, .style = style, .derived = true};
+    if (glyph_cache) *entry = lv_cache_acquire(glyph_cache, &key, NULL);
+    const lv_draw_buf_t *buffer = *entry ? ((glyph_item_t *)lv_cache_entry_get_data(*entry))->buffer : NULL;
+    rt_mutex_release(&descriptor_lock);
+    return buffer;
+}
+
+const lv_draw_buf_t *ui_reader_font_derived_store(const lv_font_t *font, uint32_t glyph,
+                                                uint32_t style, const lv_draw_buf_t *bitmap,
+                                                lv_cache_entry_t **entry)
+{
+    if (!entry) return NULL;
+    *entry = NULL;
+    if (!font || !bitmap || !bitmap->data || !lock_initialized ||
+        bitmap->header.cf != LV_COLOR_FORMAT_A8 || !bitmap->header.w || !bitmap->header.h ||
+        bitmap->header.stride < bitmap->header.w) return NULL;
+    uint64_t bytes = (uint64_t)bitmap->header.stride * bitmap->header.h;
+    if (bytes > bitmap->data_size || bytes > GLYPH_BUDGET - LV_DRAW_BUF_ALIGN - 256u) return NULL;
+    rt_mutex_take(&descriptor_lock, RT_WAITING_FOREVER);
+    glyph_item_t key = {.font = font, .glyph = glyph, .style = style, .derived = true,
+                        .slot = {.size = glyph_charge((uint32_t)bytes + LV_DRAW_BUF_ALIGN)}};
+    if (glyph_cache && bindings)
+    {
+        *entry = lv_cache_acquire(glyph_cache, &key, NULL);
+        if (!*entry && glyph_room((uint32_t)bytes + LV_DRAW_BUF_ALIGN, true))
+            *entry = lv_cache_acquire_or_create(glyph_cache, &key, (void *)bitmap);
+    }
+    const lv_draw_buf_t *buffer = *entry ? ((glyph_item_t *)lv_cache_entry_get_data(*entry))->buffer : NULL;
+    rt_mutex_release(&descriptor_lock);
+    return buffer;
+}
+
+void ui_reader_font_derived_release(lv_cache_entry_t *entry)
+{
+    if (!entry) return;
+    rt_mutex_take(&descriptor_lock, RT_WAITING_FOREVER);
+    lv_cache_release(glyph_cache, entry, NULL);
+    if (!bindings && !glyph_count)
+    {
+        lv_cache_destroy(glyph_cache, NULL);
+        glyph_cache = NULL;
+    }
+    rt_mutex_release(&descriptor_lock);
+}
+
+void ui_reader_font_derived_drop(const lv_font_t *font)
+{
+    if (!font || !lock_initialized) return;
+    lv_draw_wait_for_finish();
+    rt_mutex_take(&descriptor_lock, RT_WAITING_FOREVER);
+    glyph_drop(font);
+    rt_mutex_release(&descriptor_lock);
 }
 
 static const void *cached_bitmap(lv_font_glyph_dsc_t *glyph, lv_draw_buf_t *scratch)
@@ -272,7 +364,8 @@ void ui_reader_font_cache_detach(lv_font_t *font)
     while (*link && (*link)->font != font) link = &(*link)->next;
     if (!*link) return;
     lv_draw_wait_for_finish();
-    lv_cache_drop_all(glyph_cache, NULL);
+    rt_mutex_take(&descriptor_lock, RT_WAITING_FOREVER);
+    glyph_drop(NULL);
     font_binding_t *binding = *link;
     font->get_glyph_dsc = binding->descriptor;
     font->get_glyph_bitmap = binding->bitmap;
@@ -290,9 +383,13 @@ void ui_reader_font_cache_detach(lv_font_t *font)
     {
         LOG_I("dsc hit/miss=%u/%u, draw bitmap hit/miss=%u/%u, prepared=%u",
               descriptor_hits, descriptor_misses, bitmap_hits, bitmap_misses, prepared_count);
-        lv_cache_destroy(glyph_cache, NULL);
-        glyph_cache = NULL;
+        if (!glyph_count)
+        {
+            lv_cache_destroy(glyph_cache, NULL);
+            glyph_cache = NULL;
+        }
     }
+    rt_mutex_release(&descriptor_lock);
 }
 
 bool ui_reader_font_prepare(const lv_font_t *font, uint32_t letter, bool adjacent)

@@ -16,18 +16,20 @@
 __attribute__((used, visibility("default")))
 const char book_module_profile[] = "EPDAPP:" EPD_APP_BUILD_ID;
 
-typedef struct target target_t;
-struct target {
-    target_t *next;
+typedef struct {
     unsigned part, offset, level;
     char *title;
-};
+    size_t order;
+} target_t;
 typedef struct {
     MOBIData *m;
     MOBIRawml *raw;
     const book_sink_t *sink;
     book_sink_t proxy;
     target_t *targets;
+    size_t target_count, target_capacity;
+    MOBIPart *first_part, **parts;
+    size_t part_count;
     unsigned part;
     unsigned cover_uid;
     int have_cover, cover_in_body;
@@ -36,6 +38,7 @@ typedef struct {
 } conversion_t;
 typedef struct {
     conversion_t *ctx;
+    MOBIPart *part;
     const unsigned char *data;
     size_t size, pos, record_pos, record_size, record_index;
     char *record;
@@ -44,7 +47,7 @@ typedef struct {
 } source_t;
 typedef struct {
     source_t source;
-    target_t *target;
+    size_t target;
     size_t out_pos, out_size;
     unsigned part;
     int eof;
@@ -79,49 +82,146 @@ static int checked(conversion_t *ctx, int result)
     if (ctx->result == BOOK_OK) ctx->result = mobi_port_status();
     return ctx->result;
 }
-static MOBIPart *part_at(conversion_t *ctx, unsigned index)
+static int index_parts(conversion_t *ctx)
 {
-    MOBIPart *part = ctx->raw->markup ? ctx->raw->markup : ctx->raw->flow;
-    while (part && index--) part = part->next;
-    return part;
+    MOBIPart *part;
+    size_t i = 0;
+    ctx->first_part = ctx->raw->markup ? ctx->raw->markup : ctx->raw->flow;
+    for (part = ctx->first_part; part; part = part->next) {
+        if (ctx->part_count == UINT_MAX || ctx->part_count == SIZE_MAX / sizeof(*ctx->parts))
+            return BOOK_NO_MEMORY;
+        ++ctx->part_count;
+    }
+    /* A single stream needs no separately allocated random-access index. */
+    if (ctx->part_count <= 1) return BOOK_OK;
+    ctx->parts = mobi_alloc(ctx->part_count * sizeof(*ctx->parts));
+    if (!ctx->parts) return result_of(MOBI_MALLOC_FAILED);
+    for (part = ctx->first_part; part; part = part->next) ctx->parts[i++] = part;
+    return BOOK_OK;
+}
+static MOBIPart *part_at(const conversion_t *ctx, unsigned index)
+{
+    if (index >= ctx->part_count) return NULL;
+    return ctx->parts ? ctx->parts[index] : ctx->first_part;
 }
 static int add_target(conversion_t *ctx, unsigned part, unsigned offset,
                       const char *title, unsigned level)
 {
-    target_t **at = &ctx->targets, *target;
+    target_t *target;
     MOBIPart *p = part_at(ctx, part);
     if (!p || offset > p->size) return BOOK_ERROR;
-    while (*at && ((*at)->part < part || ((*at)->part == part && (*at)->offset < offset)))
-        at = &(*at)->next;
-    if (*at && (*at)->part == part && (*at)->offset == offset) target = *at;
-    else {
-        target = mobi_calloc(1, sizeof(*target));
-        if (!target) return result_of(MOBI_MALLOC_FAILED);
-        target->part = part;
-        target->offset = offset;
-        target->next = *at;
-        *at = target;
+    if (ctx->target_count == ctx->target_capacity) {
+        const size_t limit = SIZE_MAX / sizeof(*target);
+        size_t capacity = ctx->target_capacity;
+        target_t *targets;
+        if (capacity == limit) return BOOK_NO_MEMORY;
+        capacity = !capacity ? (limit < 32 ? limit : 32) :
+            (capacity > limit / 2 ? limit : capacity * 2);
+        targets = mobi_realloc(ctx->targets, capacity * sizeof(*targets));
+        if (!targets) return result_of(MOBI_MALLOC_FAILED);
+        ctx->targets = targets;
+        ctx->target_capacity = capacity;
     }
-    if (title && *title && !target->title) {
+    target = &ctx->targets[ctx->target_count];
+    *target = (target_t){ part, offset, 0, NULL, ctx->target_count };
+    if (title && *title) {
         target->title = bk_mobi_strdup(title);
         if (!target->title) return result_of(MOBI_MALLOC_FAILED);
         target->level = level;
     }
+    ++ctx->target_count;
     return BOOK_OK;
+}
+static int target_after(const target_t *a, const target_t *b)
+{
+    if (a->part != b->part) return a->part > b->part;
+    if (a->offset != b->offset) return a->offset > b->offset;
+    return a->order > b->order;
+}
+static void target_sift(target_t *targets, size_t root, size_t count)
+{
+    target_t value = targets[root];
+    while (root < count / 2) {
+        size_t child = root * 2 + 1;
+        if (child + 1 < count && target_after(&targets[child + 1], &targets[child])) ++child;
+        if (!target_after(&targets[child], &value)) break;
+        targets[root] = targets[child];
+        root = child;
+    }
+    targets[root] = value;
+}
+static int finish_targets(conversion_t *ctx)
+{
+    size_t i, count = ctx->target_count, used = 0;
+    /* In-place heapsort bounds worst-case work to O(n log n). The original
+     * collection order makes the first nonempty TOC title win after sorting. */
+    for (i = count / 2; i; --i) {
+        if ((i & 1023u) == 0 && mobi_port_status() != BOOK_OK) return mobi_port_status();
+        target_sift(ctx->targets, i - 1, count);
+    }
+    for (i = count; i > 1; --i) {
+        target_t value;
+        if ((i & 1023u) == 0 && mobi_port_status() != BOOK_OK) return mobi_port_status();
+        value = ctx->targets[0];
+        ctx->targets[0] = ctx->targets[i - 1];
+        ctx->targets[i - 1] = value;
+        target_sift(ctx->targets, 0, i - 1);
+    }
+    for (i = 0; i < count; ++i) {
+        target_t *target = &ctx->targets[i];
+        target_t *previous = used ? &ctx->targets[used - 1] : NULL;
+        if (previous && previous->part == target->part && previous->offset == target->offset) {
+            if (!previous->title && target->title) {
+                previous->title = target->title;
+                previous->level = target->level;
+            } else mobi_release(target->title);
+        } else ctx->targets[used++] = *target;
+    }
+    ctx->target_count = used;
+    return mobi_port_status();
+}
+static void free_targets(conversion_t *ctx)
+{
+    size_t i;
+    for (i = 0; i < ctx->target_count; ++i) mobi_release(ctx->targets[i].title);
+    mobi_release(ctx->targets);
+    mobi_release(ctx->parts);
 }
 static void target_id(char *buffer, size_t size, unsigned part, unsigned offset)
 {
     snprintf(buffer, size, "mobi:%u:%u", part, offset);
 }
-static int init_source(source_t *s, conversion_t *ctx, unsigned index)
+static const target_t *find_target(const conversion_t *ctx, const char *id)
 {
-    MOBIPart *part = part_at(ctx, index);
+    char *end, key[64];
+    unsigned long part, offset;
+    size_t low = 0, high = ctx->target_count;
+    if (strncmp(id, "mobi:", 5)) return NULL;
+    part = strtoul(id + 5, &end, 10);
+    if (*end != ':' || part > UINT_MAX) return NULL;
+    offset = strtoul(end + 1, &end, 10);
+    if (*end || offset > UINT_MAX) return NULL;
+    target_id(key, sizeof(key), (unsigned)part, (unsigned)offset);
+    if (strcmp(key, id)) return NULL;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        const target_t *target = &ctx->targets[middle];
+        if (target->part < part || (target->part == part && target->offset < offset)) low = middle + 1;
+        else high = middle;
+    }
+    if (low < ctx->target_count && ctx->targets[low].part == part && ctx->targets[low].offset == offset)
+        return &ctx->targets[low];
+    return NULL;
+}
+static int init_source(source_t *s, conversion_t *ctx, MOBIPart *part)
+{
     memset(s, 0, sizeof(*s));
     s->ctx = ctx;
     if (!part) return BOOK_ERROR;
     if (ctx->raw->skel && ctx->raw->skel->entries_count) {
         int result = result_of(mobi_reconstruct_part_data_ex(ctx->raw, part->uid, &part, false));
         if (result != BOOK_OK) return result;
+        s->part = part;
         s->data = part->data;
         s->size = part->size;
     } else {
@@ -134,10 +234,9 @@ static int init_source(source_t *s, conversion_t *ctx, unsigned index)
     }
     return BOOK_OK;
 }
-static void finish_source(source_t *s, unsigned index)
+static void finish_source(source_t *s)
 {
-    MOBIPart *part = part_at(s->ctx, index);
-    if (s->data && part) { mobi_release(part->data); part->data = NULL; }
+    if (s->data && s->part) { mobi_release(s->part->data); s->part->data = NULL; }
     mobi_release(s->record);
     memset(s, 0, sizeof(*s));
 }
@@ -421,6 +520,8 @@ static int markup_read(void *user, void *buffer, size_t length)
         if (s->eof) break;
         s->out_size = s->out_pos = 0;
         {
+            conversion_t *ctx = s->source.ctx;
+            const target_t *target;
             size_t start = s->source.pos;
             int ch = source_char(&s->source);
             if (ch < 0) {
@@ -430,13 +531,14 @@ static int markup_read(void *user, void *buffer, size_t length)
                 result = read_tag(&s->source, s->tag, sizeof(s->tag));
                 if (result != BOOK_OK) return result;
             }
-            while (s->target && s->target->part == s->part &&
-                   (s->target->offset <= start || (ch == '<' && s->target->offset < s->source.pos))) {
+            while (s->target < ctx->target_count &&
+                   (target = &ctx->targets[s->target])->part == s->part &&
+                   (target->offset <= start || (ch == '<' && target->offset < s->source.pos))) {
                 int n = snprintf(s->output + s->out_size, sizeof(s->output) - s->out_size,
-                    "<a id=\"mobi:%u:%u\"></a>", s->part, s->target->offset);
+                    "<a id=\"mobi:%u:%u\"></a>", s->part, target->offset);
                 if (n < 0 || (size_t)n >= sizeof(s->output) - s->out_size) return BOOK_UNSUPPORTED;
                 s->out_size += (size_t)n;
-                s->target = s->target->next;
+                ++s->target;
             }
             if (ch == '<') {
                 result = transform_tag(s, &s->out_size);
@@ -456,9 +558,10 @@ static int markup_read(void *user, void *buffer, size_t length)
                         if (size) {
                             tag = memchr(data, '<', size);
                             if (tag) size = (size_t)(tag - data);
-                            if (s->target && s->target->part == s->part) {
-                                size_t distance = s->target->offset > s->source.pos ?
-                                    s->target->offset - s->source.pos : 0;
+                            if (s->target < ctx->target_count &&
+                                (target = &ctx->targets[s->target])->part == s->part) {
+                                size_t distance = target->offset > s->source.pos ?
+                                    target->offset - s->source.pos : 0;
                                 if (size > distance) size = distance;
                             }
                             if (size > sizeof(s->output) - s->out_size) size = sizeof(s->output) - s->out_size;
@@ -570,16 +673,14 @@ static int proxy_anchor(void *user, const char *id, const char *title, unsigned 
     conversion_t *ctx = user;
     const char *canonical = strstr(id, "mobi:");
     char buffer[1200];
-    target_t *target;
+    const target_t *target;
     if (!canonical) {
         const char *fragment = strrchr(id, '#');
         snprintf(buffer, sizeof(buffer), "mobi-id:%u:%s", ctx->part, fragment ? fragment + 1 : id);
         canonical = buffer;
     } else {
-        for (target = ctx->targets; target; target = target->next) {
-            char key[64]; target_id(key, sizeof(key), target->part, target->offset);
-            if (!strcmp(key, canonical) && target->title) { title = target->title; level = target->level; break; }
-        }
+        target = find_target(ctx, canonical);
+        if (target && target->title) { title = target->title; level = target->level; }
     }
     if (checked(ctx, BOOK_OK)) return ctx->result;
     return checked(ctx, ctx->sink->anchor ? ctx->sink->anchor(ctx->sink->user, canonical, title, level) : BOOK_OK);
@@ -619,6 +720,7 @@ static int convert(const char *path, const book_sink_t *sink,
     book_resources_t resources;
     char *title, *author;
     unsigned pass, index;
+    size_t next_target = 0;
     int result;
     if (error && error_size) *error = 0;
     if (!path || !sink || !sink->text || !sink->markup || !allocator || !allocator->alloc || !allocator->free)
@@ -646,6 +748,8 @@ static int convert(const char *path, const book_sink_t *sink,
     result = result_of(mobi_parse_rawml_opt(ctx.raw, ctx.m, true, false, false));
     if (result != BOOK_OK) goto done;
     mobi_port_trace("resource-index");
+    result = index_parts(&ctx);
+    if (result != BOOK_OK) goto done;
     title = mobi_meta_get_title(ctx.m); author = mobi_meta_get_author(ctx.m);
     result = sink->metadata ? sink->metadata(sink->user, title, author) : BOOK_OK;
     mobi_release(title); mobi_release(author);
@@ -667,6 +771,8 @@ static int convert(const char *path, const book_sink_t *sink,
     /* A bounded first pass finds backward and cross-part targets before any
      * markup is emitted. Only offsets and TOC labels survive each part. */
     for (pass = 0; pass < 2; ++pass) {
+        MOBIPart *part;
+        mobi_port_measure_phase(pass + 1);
         mobi_port_trace(pass ? "body-begin" : "links-begin");
         if (pass && ctx.have_cover && !ctx.cover_in_body && sink->image) {
             book_stream_t cover;
@@ -678,30 +784,37 @@ static int convert(const char *path, const book_sink_t *sink,
             cover.close(cover.user);
             if (result != BOOK_OK) goto done;
         }
-        for (index = 0; part_at(&ctx, index); ++index) {
+        for (index = 0, part = ctx.first_part; part; ++index, part = part->next) {
             book_stream_t stream;
             char base[64];
             memset(html, 0, sizeof(*html));
-            result = init_source(&html->source, &ctx, index);
+            result = init_source(&html->source, &ctx, part);
             if (result != BOOK_OK) goto done;
             ctx.part = html->part = index;
             if (!pass) {
                 result = add_target(&ctx, index, 0, NULL, 0);
                 if (result == BOOK_OK) result = scan_links(html);
             } else {
-                html->target = ctx.targets;
-                while (html->target && html->target->part < index) html->target = html->target->next;
+                while (next_target < ctx.target_count && ctx.targets[next_target].part < index) ++next_target;
+                html->target = next_target;
                 snprintf(base, sizeof(base), "part%u.html", index);
                 stream = (book_stream_t){ html, 0, markup_read, NULL, NULL };
                 result = sink->markup(&ctx.proxy, &stream, base, &resources);
                 if (result == BOOK_OK) result = checked(&ctx, BOOK_OK);
+                next_target = html->target;
             }
-            finish_source(&html->source, index);
+            finish_source(&html->source);
+            if (result != BOOK_OK) goto done;
+        }
+        if (!pass) {
+            result = finish_targets(&ctx);
             if (result != BOOK_OK) goto done;
         }
         mobi_port_trace(pass ? "body-done" : "links-done");
     }
 done:
+    if (html) finish_source(&html->source);
+    free_targets(&ctx);
     if (result == BOOK_OK) result = mobi_port_status();
     if (error && error_size && result != BOOK_OK)
         snprintf(error, error_size, "%s", result == BOOK_CANCELLED ? "MOBI conversion cancelled" :
@@ -711,6 +824,7 @@ done:
     /* Also covers allocations orphaned by third-party early error returns. */
     mobi_port_trace("finish");
     rt_kprintf("[mobi] result=%d\n", result);
+    mobi_port_measure_report();
     mobi_port_finish();
     return result;
 }

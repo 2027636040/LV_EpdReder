@@ -7,6 +7,7 @@
 #include "app_service.h"
 #include "network.h"
 #include "epd_memory.h"
+#include "app_content.h"
 
 #define EPD_APP_ABI 1u
 
@@ -39,12 +40,29 @@ lv_font_t *epd_app_font_create(unsigned family, unsigned size, unsigned weight,
 void epd_app_font_destroy(lv_font_t *font);
 /* UI-thread idle preparation; false means the speculative cache budget is full. */
 bool epd_app_font_prepare(const lv_font_t *font, uint32_t letter, bool adjacent);
+/* Optional derived A8 pixels in the reader's shared font LRU. The key is an
+ * immutable wrapper font instance, its glyph ID and transformation identity.
+ * Call drop before changing/freeing/reusing that instance. UI preparation must
+ * wait for drawing before generating pixels; draw callbacks must not wait.
+ * Acquire/store return one owned reference in *entry, or NULL in both outputs.
+ * Store copies pixels synchronously and never takes ownership of bitmap. Keep
+ * source glyph references until generation/copy finishes. On failure retain
+ * the immediate bitmap path. Release each acquired entry after drawing; track
+ * cache references separately from immediate bitmap allocations. */
+const lv_draw_buf_t *epd_app_font_derived_acquire(const lv_font_t *font, uint32_t glyph,
+                                                uint32_t style, lv_cache_entry_t **entry);
+const lv_draw_buf_t *epd_app_font_derived_store(const lv_font_t *font, uint32_t glyph,
+                                              uint32_t style, const lv_draw_buf_t *bitmap,
+                                              lv_cache_entry_t **entry);
+void epd_app_font_derived_release(lv_cache_entry_t *entry);
+/* UI thread only. Outstanding references remain valid until released. */
+void epd_app_font_derived_drop(const lv_font_t *font);
 /* UI-thread operations. Libraries belong to an already-loaded application and
  * must be released after its worker and all library-owned results are stopped. */
 void *epd_app_library_open(const char *app_id, const char *name);
 void *epd_app_library_symbol(void *library, const char *symbol);
 void epd_app_library_close(void *library);
-/* Immutable XIP font bytes, valid for the firmware lifetime. No LVGL access is
+/* Immutable font bytes, valid for the firmware lifetime. No LVGL access is
  * involved, so document workers can use this view. File-only builds return NULL. */
 const void *epd_app_builtin_font_data(size_t *size);
 const lv_font_t *epd_app_font(void);
