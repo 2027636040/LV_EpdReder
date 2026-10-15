@@ -53,6 +53,7 @@ shutil.copyfile('rtua.py', os.path.join(env['build_dir'], 'rtua.py'))
 
 # Configuration macros can change public structure layouts, so every compiled
 # object must depend on rtconfig.h even when it is included through a macro.
+# Generate the partition header before compiling objects that include it indirectly.
 config_header = env.File(os.path.join(rtconfig.OUTPUT_DIR, 'rtconfig.h'))
 pending_nodes = list(env['target'])
 visited_nodes = set()
@@ -63,6 +64,7 @@ while pending_nodes:
     visited_nodes.add(node)
     if os.path.splitext(str(node))[1] in ('.o', '.obj'):
         env.Depends(node, config_header)
+        env.Depends(node, env.get('PTAB_HEADER', []))
     pending_nodes.extend(node.sources)
 
 # Add flash table
