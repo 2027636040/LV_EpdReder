@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="634" viewBox="0 0 960 634" role="img" aria-labelledby="title desc">
+<title id="title">后台数据与界面交接</title>
+<desc id="desc">应用工作线程发布受保护的业务数据，应用 UI 回调和摘要消费者分别读取副本并更新对应界面。</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#778c98"/></marker></defs>
+<rect width="960" height="634" rx="12" fill="#fff"/>
+<g font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+<text x="32" y="40" text-anchor="start" font-size="25" font-weight="600" fill="#20313b"><tspan x="32" dy="0">后台数据与界面交接</tspan></text>
+<path d="M 480 146 V 190" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 480 290 V 326 H 246 V 360" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 480 326 H 714 V 360" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 246 460 V 506" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 714 460 V 506" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="260" y="76" width="440" height="70" rx="10" fill="#edf7f5" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="280" y="108" text-anchor="start" font-size="21" font-weight="600" fill="#126c70"><tspan x="280" dy="0">应用工作线程</tspan></text>
+<rect x="200" y="190" width="560" height="100" rx="10" fill="#edf7f5" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="220" y="222" text-anchor="start" font-size="21" font-weight="600" fill="#126c70"><tspan x="220" dy="0">获取、处理并发布业务数据</tspan></text>
+<text x="220" y="252" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="220" dy="0">通过锁保护的数据副本或任务状态交接</tspan></text>
+<rect x="32" y="360" width="428" height="100" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="52" y="392" text-anchor="start" font-size="21" font-weight="600" fill="#20313b"><tspan x="52" dy="0">应用 UI 回调复制快照</tspan></text>
+<text x="52" y="422" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="52" dy="0">在主线程读取页面需要的数据</tspan></text>
+<rect x="500" y="360" width="428" height="100" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="520" y="392" text-anchor="start" font-size="21" font-weight="600" fill="#20313b"><tspan x="520" dy="0">发布摘要副本</tspan></text>
+<text x="520" y="422" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="520" dy="0">系统界面或其他消费者读取</tspan></text>
+<rect x="32" y="506" width="428" height="100" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="52" y="538" text-anchor="start" font-size="21" font-weight="600" fill="#20313b"><tspan x="52" dy="0">比较并更新页面控件</tspan></text>
+<text x="52" y="568" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="52" dy="0">只更新发生变化的内容</tspan></text>
+<rect x="500" y="506" width="428" height="100" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="520" y="538" text-anchor="start" font-size="21" font-weight="600" fill="#20313b"><tspan x="520" dy="0">更新摘要文字</tspan></text>
+<text x="520" y="568" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="520" dy="0">按摘要变化更新对应显示</tspan></text>
+</g>
+</svg>

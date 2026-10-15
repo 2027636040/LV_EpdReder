@@ -62,6 +62,26 @@ static void dlclose(void *handle)
 
 #include "module_under_test.h"
 
+/* The installer must wait for the app's private libraries too, even after the
+ * SDK has destroyed its main module and app_fwk has removed its pages. */
+typedef uint32_t rt_tick_t;
+typedef void *rt_list_t;
+typedef struct { const char *id; } gui_runing_app_t;
+static bool needs_prepare, exit_sent, prepared_resources, prepare_ok;
+static const char *job_id = "books";
+static rt_tick_t prepare_started, now;
+static unsigned prepared, release_calls;
+static void start_card_recovery(void) {}
+static void gui_app_exit(const char *id) { assert(!strcmp(id, job_id)); }
+static void gui_app_exec_now(void) {}
+static void app_service_stop(const char *id) { assert(!strcmp(id, job_id)); }
+static bool app_service_running(const char *id) { (void)id; return false; }
+static gui_runing_app_t *gui_app_trav(rt_list_t **cursor) { (void)cursor; return NULL; }
+static rt_tick_t rt_tick_get(void) { return now; }
+static rt_tick_t rt_tick_from_millisecond(uint32_t ms) { return ms; }
+static void rt_sem_release(unsigned *semaphore) { assert(semaphore == &prepared); ++release_calls; }
+#include "installer_lifetime_under_test.h"
+
 int main(void)
 {
     storage_volume_t volume;
@@ -80,6 +100,10 @@ int main(void)
     assert(app_module_loaded("books") && ((struct rt_dlmodule *)pin)->refs == 1);
     app_module_close(pin);
     assert(app_module_loaded("books") && app_modules_present());
+    assert(!dlmodule_find("books"));
+    needs_prepare = true;
+    app_installer_process();
+    assert(needs_prepare && !prepare_ok && !release_calls);
     card_available = false;
     assert(app_module_storage("books", &volume, &session));
     assert(!storage_session_valid(volume, session));
@@ -88,6 +112,8 @@ int main(void)
     assert(!app_module_open("/sdcard/apps/books/books.so", "books"));
     app_module_close(codec);
     assert(!app_modules_present() && !allocations);
+    app_installer_process();
+    assert(!needs_prepare && prepare_ok && release_calls == 1);
 
     for (int i = 0; i < 2; ++i)
     {
@@ -107,8 +133,13 @@ int main(void)
     main_module = app_module_open("/flash/apps/books/books.so", "books");
     assert(main_module && app_module_storage("books", &volume, &session));
     assert(storage_session_valid(volume, session));
+    needs_prepare = true;
+    now = 35000;
+    app_installer_process();
+    assert(!needs_prepare && !prepare_ok && release_calls == 2);
+    assert(app_module_loaded("books")); /* Timeout never forces an unload. */
     app_module_close(main_module);
     assert(!app_modules_present() && !allocations);
-    puts("module: references, private libraries, storage binding and failure cleanup passed");
+    puts("module: native references, private-library install barrier, storage binding and failure cleanup passed");
     return 0;
 }

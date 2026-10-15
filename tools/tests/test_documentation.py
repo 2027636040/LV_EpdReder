@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from native_apps import PACKAGE_BUILDERS
 
 PAGES = ('README.md', 'src/services/README.md', 'docs/README.md', 'docs/ARCHITECTURE.md',
-         'docs/PLATFORM_ROADMAP.md', 'docs/TECHNICAL_RESERVES.md',
+         'docs/DESIGN_INTENT.md', 'docs/PLATFORM_ROADMAP.md', 'docs/TECHNICAL_RESERVES.md',
          'docs/APP_SDK.md', 'docs/RECOVERY.md', 'docs/CONTENT_HANDLERS.md',
          'docs/BOARD_TEMPLATES.md', 'docs/RELEASING.md', 'docs/BUILDING.md',
          'docs/APPLICATION_DEVELOPMENT.md', 'docs/APPLICATION_LIFECYCLE.md',

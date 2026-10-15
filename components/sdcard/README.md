@@ -28,7 +28,7 @@
 
 当前目标板为 `dpi-hdk_lb57gyd7n6_epd_hcpu`，使用原生 SDIO SD 卡接口和 RT-Thread DFS FAT 文件系统。Kconfig 只约束组件实际使用的依赖，不改变总线位宽、SDIO 时钟或检测脚配置。
 
-必要条件为 `RT_USING_PIN`、`RT_USING_SDIO`、`BSP_USING_SD_LINE`、`RT_USING_DFS`、`RT_USING_DFS_ELMFAT`，以及 `SDIO_CARD_MODE=0`、有效的 `SD_INSERT_DETECT_PIN`。平台传入设备名、挂载点、检测电平和共享 I/O 锁。
+必要条件为 `RT_USING_PIN`、`RT_USING_SDIO`、`BSP_USING_SD_LINE`、`RT_USING_DFS`、`RT_USING_DFS_ELMFAT`，以及有效的 `SD_INSERT_DETECT_PIN`。SDMMC1 使用 `SDIO_CARD_MODE=0`，SDMMC2 使用 `SDIO2_CARD_MODE=0`。平台传入与控制器一致的设备名（SF32LB57 的 SDMMC1 为 `sd0`、SDMMC2 为 `sd1`）、挂载点、检测电平和共享 I/O 锁。
 
 基础 SDK 为 2.5.0、提交 `a25ebccdb986a98070287cf1701dc5adb10a265d`，还需要以下本地补丁；版本号检查不能代替接口要求：
 

@@ -13,12 +13,13 @@ def main():
     if not compiler:
         raise SystemExit("Activate an MSVC developer environment.")
     with tempfile.TemporaryDirectory(prefix="storage-component-") as output:
-        for enabled in (False, True):
-            target = Path(output) / f"storage_{int(enabled)}"
+        for device in (None, "sd0", "sd1"):
+            target = Path(output) / f"storage_{device or 'disabled'}"
             subprocess.run([
                 compiler, "/nologo", "/std:c11", "/W4", "/WX", "/TC",
                 "/D_CRT_SECURE_NO_WARNINGS",
-                *([] if not enabled else ["/DPKG_USING_EPD_SDCARD"]),
+                *([] if device is None else ["/DPKG_USING_EPD_SDCARD"]),
+                f'/DEPD_SDCARD_DEVICE_NAME="{device or "sd0"}"',
                 f"/I{tests / 'storage_stubs'}",
                 f"/I{repo / 'components/sdcard/include'}",
                 str(tests / "test_storage_component.c"),

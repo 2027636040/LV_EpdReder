@@ -2,6 +2,13 @@
 
 comment "------------Project configuration-----------"
 
+config EPD_SDCARD_DEVICE_NAME
+    string "TF card block device name"
+    depends on PKG_USING_EPD_SDCARD
+    default "sd0"
+    help
+        Use the SDK SD controller device name: sd0 for SDMMC1, sd1 for SDMMC2.
+
 config MBEDTLS_USER_CONFIG_FILE
     string
     depends on PKG_USING_MBEDTLS && EPD_USE_LVGL && BSP_USING_PSRAM && IMAGE_CACHE_IN_PSRAM_SIZE > 0
@@ -164,7 +171,6 @@ if !BSP_USING_BUILT_LCD || EPD_USE_LVGL
 
 		config LCD_USING_EPD_E0470A03_V10_57
 			bool "4.7 rect electronic paper display(EPD E0470A03 1216x684) for SF32LB57 board"
-			select LCD_USING_EPD_E0470A03
 			select BSP_LCDC_USING_EPD_8BIT
 			select BSP_LCDC_USING_DIRECT_EPD
 	endchoice

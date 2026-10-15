@@ -94,6 +94,15 @@ class SdkContractTests(unittest.TestCase):
         self.assertEqual(option.str_value, "n")
         kconf.syms["SD_INSERT_DETECT_PIN"].set_value("11")
         self.assertEqual(option.str_value, "y")
+        kconf.syms["BSP_USING_SDMMC1"].set_value("n")
+        self.assertEqual(option.str_value, "n")
+        kconf.syms["BSP_USING_SDMMC2"].set_value("y")
+        self.assertEqual(option.str_value, "y")
+        for mode in ("1", "2"):
+            kconf.syms["SDIO2_CARD_MODE"].set_value(mode)
+            self.assertEqual(option.str_value, "n")
+        kconf.syms["SDIO2_CARD_MODE"].set_value("0")
+        self.assertEqual(option.str_value, "y")
         self.assertEqual(kconf.warnings, [])
 
 

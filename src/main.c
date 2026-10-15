@@ -19,9 +19,7 @@
 #include "ui/launcher.h"
 #include "buttons.h"
 #include "platform/hang_diag.h"
-#ifdef EPD_DIAG_FIXTURES
-#include "fault_probe.h"
-#endif
+#include "platform/epd_panel_init.h"
 
 #include "board_service.h" /* 板级服务（TF 卡文件系统挂载） */
 
@@ -80,6 +78,13 @@ int main(void)
     LOG_I("LVGL display initialized: %d x %d", LCD_HOR_RES_MAX, LCD_VER_RES_MAX);
     mem_report("after lvgl");
 
+    ret = epd_panel_boot();
+    if (ret != RT_EOK)
+    {
+        LOG_E("EPD initialization refresh failed: %d", ret);
+        return ret;
+    }
+
     /* 内部文件系统挂载到 /flash，TF 卡挂载到 /sdcard，并启动热插拔服务。 */
     board_start_filesystem();
     mem_report("after mount");
@@ -110,9 +115,6 @@ int main(void)
     {
         hang_diag_mark(HANG_DIAG_UI, "ui-app-process", 0, RT_TRUE);
         ui_app_process();
-#ifdef EPD_DIAG_FIXTURES
-        diag_fixture_poll();
-#endif
         hang_diag_mark(HANG_DIAG_UI, "lv-timer-handler", 0, RT_TRUE);
         uint32_t ms = lv_timer_handler();
         if (ms == LV_NO_TIMER_READY || ms > 20)

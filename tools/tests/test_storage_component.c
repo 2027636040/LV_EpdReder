@@ -72,7 +72,8 @@ void rt_pin_mode(rt_base_t pin, rt_base_t mode)
 rt_err_t sdcard_start(const sdcard_config_t *config)
 {
     assert(mounts == 2 && io_lock.nesting == 0);
-    assert(!strcmp(config->device_name, "sd0") && !strcmp(config->mount_point, "/sdcard"));
+    assert(!strcmp(config->device_name, EPD_SDCARD_DEVICE_NAME));
+    assert(!strcmp(config->mount_point, "/sdcard"));
     assert(config->detect_pin == 11 && config->present_level == PIN_LOW);
     assert(config->io_lock == &io_lock);
     started_config = *config;

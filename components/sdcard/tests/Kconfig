@@ -15,6 +15,15 @@ config RT_USING_DFS
 config RT_USING_DFS_ELMFAT
     bool "FAT"
     default y
+config BSP_USING_SDMMC1
+    bool "SDMMC1"
+    default y
+config BSP_USING_SDMMC2
+    bool "SDMMC2"
+    default n
+config SDIO2_CARD_MODE
+    int "SDMMC2 card type"
+    default 0
 config SDIO_CARD_MODE
     int "Card type"
     default 0

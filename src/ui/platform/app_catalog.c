@@ -109,7 +109,8 @@ static bool module_open(const char *id, app_entity_info *info)
                  app_package_read(storage_app_directory(volume), id, &entry);
     char root[96];
     if (found) found = storage_app_path(root, sizeof(root), id, STORAGE_APP_CODE, "");
-    app_package_status_t status = found ? app_package_verify(root, id, false) : APP_PACKAGE_FORMAT_ERROR;
+    size_t load_peak = 0;
+    app_package_status_t status = found ? app_package_verify(root, id, false, &load_peak) : APP_PACKAGE_FORMAT_ERROR;
     storage_unlock();
     if (status != APP_PACKAGE_OK)
     {
@@ -120,7 +121,7 @@ static bool module_open(const char *id, app_entity_info *info)
     snprintf(path, sizeof(path), "%s/%s.so", root, id);
     /* Only a new ELF load needs headroom; reusing a module must not discard
      * its reader's warm cache on every page entry. */
-    if (!dlmodule_find(id)) ui_reader_font_cache_reserve(2u * 1024u * 1024u);
+    if (!dlmodule_find(id)) ui_reader_font_cache_reserve(load_peak);
     struct rt_dlmodule *module = app_module_open(path, id);
     if (!module)
     {

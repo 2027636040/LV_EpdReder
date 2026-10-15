@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="808" viewBox="0 0 960 808" role="img" aria-labelledby="title desc">
+<title id="title">应用安装与更新事务</title>
+<desc id="desc">安装器在目标应用停止后，记录复制、发布和提交阶段，经暂存、校验、目录发布和清理完成安装。</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#778c98"/></marker></defs>
+<rect width="960" height="808" rx="12" fill="#fff"/>
+<g font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+<text x="32" y="40" text-anchor="start" font-size="25" font-weight="600" fill="#20313b"><tspan x="32" dy="0">应用安装与更新事务</tspan></text>
+<path d="M 446 132 H 514" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 721 188 V 224" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 514 280 H 446" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 239 336 V 372" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 446 428 H 514" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 721 484 V 520" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 514 576 H 446" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 239 632 V 668" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 446 724 H 514" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="32" y="76" width="414" height="112" rx="10" fill="#edf7f5" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="59" cy="105" r="14" fill="#126c70"/>
+<text x="59" y="111" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="59" dy="0">1</tspan></text>
+<text x="84" y="112" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="84" dy="0">检查安装条件</tspan></text>
+<text x="52" y="142" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="52" dy="0">安装源、目标卷与版本</tspan></text>
+<rect x="514" y="76" width="414" height="112" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="541" cy="105" r="14" fill="#126c70"/>
+<text x="541" y="111" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="541" dy="0">2</tspan></text>
+<text x="566" y="112" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="566" dy="0">等待目标应用停止</tspan></text>
+<text x="534" y="142" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="534" dy="0">页面、服务及模块引用完成退出</tspan></text>
+<rect x="514" y="224" width="414" height="112" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="541" cy="253" r="14" fill="#126c70"/>
+<text x="541" y="259" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="541" dy="0">3</tspan></text>
+<text x="566" y="260" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="566" dy="0">写入复制阶段记录</tspan></text>
+<text x="534" y="290" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="534" dy="0">保存当前事务进度</tspan></text>
+<rect x="32" y="224" width="414" height="112" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="59" cy="253" r="14" fill="#126c70"/>
+<text x="59" y="259" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="59" dy="0">4</tspan></text>
+<text x="84" y="260" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="84" dy="0">复制到暂存目录</tspan></text>
+<text x="52" y="290" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="52" dy="0">写入完整应用包</tspan></text>
+<rect x="32" y="372" width="414" height="112" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="59" cy="401" r="14" fill="#126c70"/>
+<text x="59" y="407" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="59" dy="0">5</tspan></text>
+<text x="84" y="408" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="84" dy="0">校验暂存包</tspan></text>
+<text x="52" y="438" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="52" dy="0">检查完整包的内容</tspan></text>
+<rect x="514" y="372" width="414" height="112" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="541" cy="401" r="14" fill="#126c70"/>
+<text x="541" y="407" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="541" dy="0">6</tspan></text>
+<text x="566" y="408" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="566" dy="0">记录发布阶段</tspan></text>
+<text x="534" y="438" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="534" dy="0">准备目录切换</tspan></text>
+<rect x="514" y="520" width="414" height="112" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="541" cy="549" r="14" fill="#126c70"/>
+<text x="541" y="555" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="541" dy="0">7</tspan></text>
+<text x="566" y="556" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="566" dy="0">发布新程序目录</tspan></text>
+<text x="534" y="586" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="534" dy="0">旧目录改名保留，新目录生效</tspan></text>
+<rect x="32" y="520" width="414" height="112" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="59" cy="549" r="14" fill="#126c70"/>
+<text x="59" y="555" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="59" dy="0">8</tspan></text>
+<text x="84" y="556" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="84" dy="0">记录提交阶段</tspan></text>
+<text x="52" y="586" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="52" dy="0">保存目录发布结果</tspan></text>
+<rect x="32" y="668" width="414" height="112" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="59" cy="697" r="14" fill="#126c70"/>
+<text x="59" y="703" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="59" dy="0">9</tspan></text>
+<text x="84" y="704" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="84" dy="0">清理旧程序与旧缓存</tspan></text>
+<text x="52" y="734" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="52" dy="0">保留应用数据目录</tspan></text>
+<rect x="514" y="668" width="414" height="112" rx="10" fill="#edf7f5" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="541" cy="697" r="14" fill="#126c70"/>
+<text x="541" y="703" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="541" dy="0">10</tspan></text>
+<text x="566" y="704" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="566" dy="0">结束安装事务</tspan></text>
+<text x="534" y="734" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="534" dy="0">删除事务记录，通知应用目录变化</tspan></text>
+</g>
+</svg>

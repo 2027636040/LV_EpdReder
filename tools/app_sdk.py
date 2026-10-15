@@ -259,8 +259,8 @@ def export_sdk(repo, firmware, output, toolchain=None, headers=()):
         shutil.copyfile(repo / 'docs/APP_SDK.md', staged / 'README.md')
         recipe = {'sdk_format': FORMAT, 'board': profile['board'], 'build_id': profile['build_id'],
                   'compiler': profile['compiler'], 'cflags': cflags,
-                  'ldflags': ldflags + ['-e', '0', '-Wl,--build-id=sha1'],
-                  'strip_flags': ['-R', '.hash', '--keep-section=.note.gnu.build-id'],
+                  'ldflags': ldflags + ['-e', '0'],
+                  'strip_flags': ['-R', '.hash'],
                   'defines': defines, 'include_paths': includes,
                   'public_headers': [relative(p) for p in public],
                   'firmware_sha256': digest(image), 'rtua_sha256': digest(firmware / 'rtua.py'),
@@ -288,7 +288,7 @@ def load_sdk(root):
     cflags, ldflags = compiler_flags(profile)
     if (recipe['build_id'] != profile['build_id'] or recipe['board'] != profile['board']
             or recipe['compiler'] != profile['compiler'] or recipe['cflags'] != cflags
-            or recipe['ldflags'] != ldflags + ['-e', '0', '-Wl,--build-id=sha1']):
+            or recipe['ldflags'] != ldflags + ['-e', '0']):
         raise ValueError('SDK recipe/profile mismatch')
     ua = json.loads((root / 'rtua.json').read_text(encoding='utf-8'))
     if ua != {'CPPPATH': recipe['include_paths'], 'CPPDEFINES': recipe['defines']}:

@@ -37,7 +37,7 @@ static void status_poll(void)
         pan_state != BTPAN_STATE_OFF,
         pan_state == BTPAN_STATE_CONNECTED || pan_state == BTPAN_STATE_NETWORK_READY);
     rt_hw_interrupt_enable(level);
-    app_service_summary("weather", snapshot.weather, sizeof(snapshot.weather));
+    epd_app_summary_read("weather", snapshot.weather, sizeof(snapshot.weather));
     snapshot.battery_percent = battery_get_percentage();
     snapshot.charging = battery_is_charging();
     time_t now = time(RT_NULL);

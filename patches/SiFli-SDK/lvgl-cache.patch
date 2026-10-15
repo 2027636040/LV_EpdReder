@@ -1,0 +1,26 @@
+diff --git a/external/lvgl_v9/src/misc/cache/lv_cache_private.h b/external/lvgl_v9/src/misc/cache/lv_cache_private.h
+index 80efd15f2..1f3e6ef17 100644
+--- a/external/lvgl_v9/src/misc/cache/lv_cache_private.h
++++ b/external/lvgl_v9/src/misc/cache/lv_cache_private.h
+@@ -42,7 +42,7 @@ struct _lv_cache_entry_t;
+ typedef struct _lv_cache_ops_t lv_cache_ops_t;
+ typedef struct _lv_cache_class_t lv_cache_class_t;
+ 
+-typedef int8_t lv_cache_compare_res_t;
++typedef int32_t lv_cache_compare_res_t;
+ typedef bool (*lv_cache_create_cb_t)(void * node, void * user_data);
+ typedef void (*lv_cache_free_cb_t)(void * node, void * user_data);
+ typedef lv_cache_compare_res_t (*lv_cache_compare_cb_t)(const void * a, const void * b);
+diff --git a/external/lvgl_v9/src/misc/lv_rb.h b/external/lvgl_v9/src/misc/lv_rb.h
+index bec0a788f..ef2766bc4 100644
+--- a/external/lvgl_v9/src/misc/lv_rb.h
++++ b/external/lvgl_v9/src/misc/lv_rb.h
+@@ -30,7 +30,7 @@ typedef enum {
+     LV_RB_COLOR_BLACK
+ } lv_rb_color_t;
+ 
+-typedef int8_t lv_rb_compare_res_t;
++typedef int32_t lv_rb_compare_res_t;
+ 
+ typedef lv_rb_compare_res_t (*lv_rb_compare_t)(const void * a, const void * b);
+ 

@@ -90,7 +90,7 @@
   function footer() {
     const node = element("footer", "footer");
     node.append(
-      element("span", "", "SiFli EPD · 平台开发文档"),
+      element("span", "", "© 2026 SiFli"),
       link("知识库维护", route("doc/README.md")),
     );
     return node;
@@ -104,25 +104,23 @@
     main.append(breadcrumb("文档首页"));
     const hero = element("section", "hero");
     hero.append(
-      element("div", "eyebrow", "SIFLI EPD / DOCUMENTATION"),
-      element("h1", "home-title", "从理解平台，到构建应用。"),
+      element("h1", "home-title", "SIFLI EPD 平台知识库"),
       element(
         "p",
         "home-intro",
-        "墨水屏平台的架构、接口与开发实践。在这里了解系统如何组织，构建你的第一个动态应用，或查阅下一阶段的技术设计。",
+        "阅读本站，你将获取墨水屏平台的架构、接口与开发实践，以及快速构建自己的第一个EPD平台应用。",
       ),
     );
     const actions = element("div", "hero-actions");
     actions.append(
-      link("阅读平台架构  →", route("docs/ARCHITECTURE.md"), "button"),
+      link("阅读平台架构", route("docs/ARCHITECTURE.md"), "button"),
       link("开始构建", route("docs/BUILDING.md"), "button secondary"),
     );
     hero.append(actions);
     main.append(
       hero,
       heading(
-        "按主题查阅",
-        `${data.groups.length} 个主题 · ${docs.size} 篇文档`,
+        "按主题查阅"
       ),
     );
     const grid = element("div", "card-grid");
@@ -142,7 +140,7 @@
       );
       grid.append(card);
     });
-    main.append(grid, heading("应用设计", "从具体应用了解平台实践"));
+    main.append(grid, heading("应用设计", ""));
     const apps = element("div", "app-links");
     [
       ["weather", "天气"],
@@ -166,10 +164,10 @@
       "中查阅。",
     );
     main.append(note, footer());
-    toc.append(element("h2", "", "快速开始"));
+    toc.append(element("h2", "", "或者，你也可以在这里快速开始"));
     [
       ["了解系统边界", "docs/ARCHITECTURE.md"],
-      ["编译与工厂预装", "docs/BUILDING.md"],
+      ["编译与预装动态应用", "docs/BUILDING.md"],
       ["开发动态应用", "docs/APPLICATION_DEVELOPMENT.md"],
       ["定位应用故障", "docs/DYNAMIC_APP_DEBUGGING.md"],
     ].forEach(([text, id], i) =>
@@ -181,7 +179,7 @@
       element(
         "p",
         "",
-        "正文来自仓库 Markdown。网页提供统一的导航、搜索和阅读入口。",
+        "你将可以在仓库中浏览MD形式的文档源文件。",
       ),
       link("浏览完整文档索引 →", route("docs/README.md")),
     );

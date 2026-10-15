@@ -208,7 +208,7 @@ void storage_init(void)
     rt_kprintf("[storage] flash=%d\n", flash_mounted);
 #ifdef PKG_USING_EPD_SDCARD
     const sdcard_config_t config = {
-        .device_name = "sd0",
+        .device_name = EPD_SDCARD_DEVICE_NAME,
         .mount_point = STORAGE_SD_ROOT,
         .detect_pin = SD_INSERT_DETECT_PIN,
         .present_level = PIN_LOW,

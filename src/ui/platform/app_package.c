@@ -369,7 +369,11 @@ static app_package_status_t package_verify(const char *root, const char *id, boo
         bool check_library = selected_library && (all_files ||
                              (requested && !strcmp(requested, selected_library)));
         if (all_files || is_program || check_library) ok = file_hash(path, line);
-        if (is_program) { has_program = true; ok = !resources_only && ok && elf_valid(path, load_bytes, NULL); }
+        if (is_program)
+        {
+            has_program = true;
+            ok = !resources_only && ok && elf_valid(path, load_bytes, requested ? NULL : load_peak);
+        }
         if (check_library) ok = ok && elf_valid(path, library_bytes,
                               requested && !strcmp(requested, selected_library) ? load_peak : NULL);
         if (icon && !strcmp(name, icon)) has_icon = true;
@@ -388,9 +392,11 @@ finish:
     return status;
 }
 
-app_package_status_t app_package_verify(const char *root, const char *id, bool all_files)
+app_package_status_t app_package_verify(const char *root, const char *id, bool all_files,
+                                        size_t *load_peak)
 {
-    return package_verify(root, id, all_files, NULL, NULL);
+    if (load_peak) *load_peak = 0;
+    return package_verify(root, id, all_files, NULL, load_peak);
 }
 
 app_package_status_t app_package_verify_library(const char *root, const char *id,

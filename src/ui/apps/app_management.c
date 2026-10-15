@@ -1,7 +1,6 @@
 #include "ui_internal.h"
 #include "platform/app_catalog.h"
 #include "platform/app_installer.h"
-#include "platform/app_settings_registry.h"
 #include "platform/app_recovery.h"
 #include "storage.h"
 #include <dfs_posix.h>
@@ -18,7 +17,6 @@
 typedef struct
 {
     epd_app_entry_t entries[APP_ROWS];
-    ui_page_id_t pages[APP_ROWS];
     lv_obj_t *rows[APP_ROWS], *labels[APP_ROWS], *empty, *previous, *next;
     unsigned first, count;
     bool more;
@@ -35,19 +33,6 @@ static void list_refresh(void)
     unsigned seen = 0;
     list->count = 0;
     list->more = false;
-    if (current->id == UI_PAGE_APP_SETTINGS)
-    {
-        const app_setting_entry_t *setting;
-        for (unsigned i = 0; (setting = app_settings_get(i)) != NULL; ++i)
-        {
-            if (seen++ < list->first) continue;
-            if (list->count == APP_ROWS) { list->more = true; break; }
-            unsigned row = list->count++;
-            snprintf(list->entries[row].id, sizeof(list->entries[row].id), "%s", setting->id);
-            snprintf(list->entries[row].name, sizeof(list->entries[row].name), "%s", setting->title);
-            list->pages[row] = setting->page;
-        }
-    }
     storage_lock();
     bool installing = current->id == UI_PAGE_APP_INSTALL;
     for (storage_volume_t v = STORAGE_FLASH; v < (installing ? 1 : STORAGE_COUNT) && !list->more; ++v)
@@ -70,8 +55,7 @@ static void list_refresh(void)
             }
             if (seen++ < list->first) continue;
             if (list->count == APP_ROWS) { list->more = true; break; }
-            list->entries[list->count] = entry;
-            list->pages[list->count++] = UI_PAGE_COUNT;
+            list->entries[list->count++] = entry;
         }
         closedir(dir);
     }
@@ -201,7 +185,6 @@ bool app_list_action(int *target)
         unsigned row = *target - APP_ROW_BASE;
         if (current->id == UI_PAGE_APP_SETTINGS)
         {
-            if (list->pages[row] < UI_PAGE_COUNT) { *target = list->pages[row]; return false; }
             if (app_recovery_active())
             {
                 popup_open("恢复模式下无法打开应用", "仍可安装或卸载应用");

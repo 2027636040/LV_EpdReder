@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="952" viewBox="0 0 960 952" role="img" aria-labelledby="title desc">
+<title id="title">固件与动态应用构建关系</title>
+<desc id="desc">平台构建产出固件及应用构建依据；应用源码、私有资源和预生成数据结合这些构建依据，生成动态模块和完整应用目录包。</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#778c98"/></marker></defs>
+<rect width="960" height="952" rx="12" fill="#fff"/>
+<g font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+<text x="32" y="40" text-anchor="start" font-size="25" font-weight="600" fill="#20313b"><tspan x="32" dy="0">固件与动态应用构建关系</tspan></text>
+<path d="M 296 166 V 206" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 296 294 V 336 H 246 V 376" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 296 336 H 714 V 376" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 714 516 V 572 H 480 V 666" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 246 624 V 646 H 480" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M 480 772 V 818" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="32" y="76" width="528" height="90" rx="10" fill="#edf7f5" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="52" y="108" text-anchor="start" font-size="20" font-weight="600" fill="#126c70"><tspan x="52" dy="0">SDK · 板级配置 · 平台源码 · 组件依赖</tspan></text>
+<rect x="32" y="206" width="528" height="88" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="52" y="238" text-anchor="start" font-size="21" font-weight="600" fill="#20313b"><tspan x="52" dy="0">project/SConstruct</tspan></text>
+<text x="52" y="268" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="52" dy="0">构建平台固件并导出应用构建信息</tspan></text>
+<rect x="32" y="376" width="428" height="140" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="52" y="408" text-anchor="start" font-size="21" font-weight="600" fill="#20313b"><tspan x="52" dy="0">固件产物</tspan></text>
+<text x="52" y="438" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="52" dy="0">main.elf</tspan><tspan x="52" dy="26">主固件与公共资源镜像</tspan></text>
+<rect x="500" y="376" width="428" height="140" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="520" y="408" text-anchor="start" font-size="21" font-weight="600" fill="#20313b"><tspan x="520" dy="0">应用构建依据</tspan></text>
+<text x="520" y="438" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="520" dy="0">rtconfig.h · cconfig.h · rtua.py</tspan><tspan x="520" dy="26">app-profile.json</tspan><tspan x="520" dy="26">epd_app_profile.h</tspan></text>
+<rect x="32" y="548" width="428" height="76" rx="10" fill="#edf7f5" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="52" y="580" text-anchor="start" font-size="20" font-weight="600" fill="#126c70"><tspan x="52" dy="0">应用源码 · 私有资源 · 预生成数据</tspan></text>
+<rect x="200" y="666" width="560" height="106" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="220" y="698" text-anchor="start" font-size="21" font-weight="600" fill="#20313b"><tspan x="220" dy="0">动态模块链接与导入检查</tspan></text>
+<text x="220" y="728" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="220" dy="0">沿用平台配置、导出接口与兼容指纹</tspan></text>
+<rect x="104" y="818" width="752" height="106" rx="10" fill="#edf7f5" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="124" y="850" text-anchor="start" font-size="21" font-weight="600" fill="#126c70"><tspan x="124" dy="0">完整应用目录包</tspan></text>
+<text x="124" y="880" text-anchor="start" font-size="20" font-weight="400" fill="#52646f"><tspan x="124" dy="0">project/build_&lt;board&gt;/app-resources/&lt;id&gt;/</tspan></text>
+</g>
+</svg>

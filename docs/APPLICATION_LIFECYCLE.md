@@ -107,8 +107,9 @@ TF 卡应用还必须通过本次插卡的用户确认及数据迁移；普通�
 
 ### UI 线程分步任务
 
-需要使用 LVGL 字体度量的任务不能与 UI 并发操作字体缓存。此类应用在
-`epd_app_background` 中仅设置 `ui_process`，不设置 `run`、网络订阅、线程栈或优先级：
+需要使用 LVGL 字体度量的任务不能与 UI 并发操作字体缓存。只需要 UI 分步工作的服务可以在
+`epd_app_background` 中仅设置 `ui_process`，不设置 `run`、网络订阅、线程栈或优先级。
+下面是纯 UI 分步服务的描述符示意，不是当前书架的完整配置；当前书架同时配置文档工作线程和 UI 回调：
 
 ```c
 const epd_background_t epd_app_background = {

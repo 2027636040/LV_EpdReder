@@ -36,6 +36,8 @@ def main():
             source = re.sub(r"^#include[^\n]*\n", "", source, flags=re.MULTILINE)
             (output / f"{name}_under_test.h").write_text(source, encoding="utf-8")
         installer = (repo / "src/ui/platform/app_installer.c").read_text(encoding="utf-8")
+        (output / "installer_lifetime_under_test.h").write_text(
+            function(installer, "void app_installer_process("), encoding="utf-8")
         catalog = (repo / "src/ui/platform/app_catalog.c").read_text(encoding="utf-8")
         storage = (repo / "src/services/storage_file.c").read_text(encoding="utf-8")
         selected = "".join(function(installer, signature) for signature in (

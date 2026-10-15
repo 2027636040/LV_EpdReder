@@ -78,7 +78,7 @@
 
 | 能力 | 头文件 | 关键接口 |
 |---|---|---|
-| 应用摘要 | `app_service.h` | `app_service_summary()` 读取后台任务发布的副本，不调用模块代码 |
+| 应用摘要 | `app_service.h` | `epd_app_summary_read()` 读取后台任务发布的副本，不调用模块代码 |
 | 蓝牙 PAN | `bt_pan.h` | `btpan_get_state()` / `btpan_enable()` |
 | 网络事件 | `network.h` | `network_snapshot()` / `network_subscribe()` / `network_unsubscribe()` |
 | 阅读应用 | `platform/epd_app.h` | 字体、文本设置入口、状态与最近阅读摘要；书库和阅读引擎是模块私有接口 |

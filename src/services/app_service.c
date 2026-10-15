@@ -67,11 +67,6 @@ void epd_service_publish_summary(epd_service_t *service, const char *text)
 }
 RTM_EXPORT(epd_service_publish_summary);
 
-void app_service_summary(const char *id, char *text, size_t capacity)
-{
-    (void)epd_app_summary_read(id, text, capacity);
-}
-
 uint32_t epd_app_summary_revision(void)
 {
     rt_base_t level = rt_hw_interrupt_disable();

@@ -55,6 +55,13 @@ def main():
             'static bool positive_integer(', 'static bool content_extensions_valid(',
             'bool app_package_handles_path(', 'bool app_package_metadata('))
         (out / 'package_under_test.h').write_text(selected, encoding='utf-8')
+        (out / 'package_load_under_test.h').write_text(''.join(function(package, signature) for signature in (
+            'static bool path_join(', 'static bool relative_path(', 'static const char *string_value(',
+            'static bool positive_integer(', 'static bool content_extensions_valid(', 'static bool hash_text(',
+            'static uint32_t get_u32(', 'static unsigned get_u16(', 'static bool elf_valid(',
+            'static bool library_name(', 'static app_package_status_t package_verify(',
+            'app_package_status_t app_package_verify(', 'app_package_status_t app_package_verify_library(')),
+            encoding='utf-8')
         (out / 'content_under_test.h').write_text(
             without_includes(source('src/ui/platform/app_content.c')), encoding='utf-8')
         sdk_intent = '#include "test_app_content_sdk_stubs.h"\n'
@@ -76,6 +83,11 @@ def main():
         subprocess.run(common + ['/c', str(sdk / 'external/cJSON-1.7.17/cJSON.c')], cwd=out, check=True)
         target = out / 'content.exe'
         subprocess.run(common + [str(tests / 'test_app_content.c'), 'sdk_intent.obj', 'cJSON.obj',
+                                  f'/Fe{target}'], cwd=out, check=True)
+        subprocess.run([str(target)], cwd=out, check=True)
+        target = out / 'package_load.exe'
+        subprocess.run(common + ['/wd4018', '/wd4389', '/wd4456',
+                                  str(tests / 'test_app_package_load.c'), 'cJSON.obj',
                                   f'/Fe{target}'], cwd=out, check=True)
         subprocess.run([str(target)], cwd=out, check=True)
         books = source('modules/books/app_main.c')

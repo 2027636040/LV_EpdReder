@@ -120,13 +120,6 @@ SECTIONS
     . = . + 4;
   } > ROM
 
-  .note.gnu.build-id : ALIGN(4)
-  {
-    __firmware_build_id_start__ = .;
-    KEEP(*(.note.gnu.build-id))
-    __firmware_build_id_end__ = .;
-  } > ROM
-
   .stack :
   {
     . = ALIGN(8);

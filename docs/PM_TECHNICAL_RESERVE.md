@@ -418,7 +418,7 @@ TF 字体全量加载到 PSRAM 后会在关机时丢失，开机重新读入即�
 | 框架调度暂停 | [gui_app_fwk.c](../SiFli-SDK/middleware/app_fwk/gui_app_fwk.c)、[app_schedule.c](../SiFli-SDK/middleware/app_fwk/app_schedule.c) |
 | 主循环和输入 | [main.c](../src/main.c)、[ui_app.c](../src/ui/ui_app.c)、[buttons.c](../src/boards/controls/buttons.c) |
 | 页面与阅读任务 | [launcher.c](../src/ui/launcher.c)：`page_lifecycle`、`launcher_process`；[ui_reader.c](../modules/books/ui_reader.c)：`ui_reader_process` |
-| EPD 电源及灰度缓存 | [epd_e0470a03.c](../SiFli-SDK/customer/peripherals/display/epd_e0470a03/epd_e0470a03.c)、[epd_tps.c](../SiFli-SDK/customer/peripherals/display/epd_e0470a03/epd_tps.c) |
+| EPD 电源及灰度缓存 | [epd_e0470a03.c](../src/boards/epd_e0470a03_57x/epd_e0470a03.c)、[epd_tps.c](../src/boards/epd_e0470a03_57x/epd_tps.c) |
 | LCD 与 SDIO 传输保护 | [drv_lcd.c](../SiFli-SDK/rtos/rtthread/bsp/sifli/drivers/drv_lcd.c)、[drv_sdio.c](../SiFli-SDK/rtos/rtthread/bsp/sifli/drivers/drv_sdio.c) |
 | 57 唤醒引脚 | [bf0_hal_hpaon_sf32lb57x.c](../SiFli-SDK/drivers/hal/bf0_hal_hpaon_sf32lb57x.c)、[bf0_hal_aon_sf32lb57x.h](../SiFli-SDK/drivers/Include/bf0_hal_aon_sf32lb57x.h) |
 | 板级电源和 PSRAM | [bsp_power.c](../SiFli-SDK/customer/boards/sf32lb57-dpi-hdk_base/bsp_power.c)、[flash.c](../SiFli-SDK/customer/boards/common/flash.c) |

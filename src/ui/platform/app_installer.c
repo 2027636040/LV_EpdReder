@@ -1,11 +1,11 @@
 #include "app_installer.h"
 #include "app_catalog.h"
 #include "app_package.h"
+#include "app_module.h"
 #include "storage.h"
 #include "storage_file.h"
 #include "app_service.h"
 #include "gui_app_int.h"
-#include <dlmodule.h>
 #include <errno.h>
 #include <dfs_posix.h>
 #include <dfs_fs.h>
@@ -234,7 +234,7 @@ static bool recover_locked(const install_paths_t *p, bool *published)
     case TX_PUBLISH:
         if (staging)
         {
-            if (app_package_verify(p->staging, transaction.id, true) != APP_PACKAGE_OK)
+            if (app_package_verify(p->staging, transaction.id, true, NULL) != APP_PACKAGE_OK)
             {
                 /* Copy was not committed. Restore an intact old directory. */
                 if (backup && (installed || rename(p->backup, destination) != 0)) return false;
@@ -320,7 +320,7 @@ static bool migrate_data(const char *id, storage_volume_t volume)
     int installed = path_state(target);
     if (installed < 0) return false;
     if (installed && path_state(marker) == 0) return true;
-    if (dlmodule_find(id) || app_service_running(id)) return false;
+    if (app_module_loaded(id) || app_service_running(id)) return false;
     const uint32_t magic = 0x4d494752u;
     if (installed)
     {
@@ -457,7 +457,7 @@ void app_installer_process(void)
     bool alive = false;
     while ((app = gui_app_trav(&cursor)) != NULL)
         if (!strcmp(app->id, job_id)) alive = true;
-    alive = alive || (!prepared_resources && (app_service_running(job_id) || dlmodule_find(job_id)));
+    alive = alive || (!prepared_resources && (app_service_running(job_id) || app_module_loaded(job_id)));
     if (alive && (rt_tick_t)(rt_tick_get() - prepare_started) < rt_tick_from_millisecond(35000)) return;
     prepare_ok = !alive;
     needs_prepare = false;
@@ -497,7 +497,7 @@ static void worker(void *parameter)
     if (!app_package_read(EPD_PACKAGE_DIRECTORY, job_id, &entry))
     { message = "应用包格式不正确"; goto finish; }
     snprintf(source, sizeof(source), EPD_PACKAGE_DIRECTORY "/%s", job_id);
-    app_package_status_t package_status = app_package_verify(source, job_id, true);
+    app_package_status_t package_status = app_package_verify(source, job_id, true, NULL);
     if (package_status != APP_PACKAGE_OK)
     {
         rt_kprintf("[apps] install %s: %s\n", job_id, app_package_error(package_status));
@@ -535,7 +535,7 @@ static void worker(void *parameter)
     uint64_t copied = 0;
     bool staged = tree_walk(source, p->staging, 0, TREE_COPY, fs.f_bsize, &copied, buffer) &&
                   copied == required && storage_available(STORAGE_SD) &&
-                  app_package_verify(p->staging, job_id, true) == APP_PACKAGE_OK;
+                  app_package_verify(p->staging, job_id, true, NULL) == APP_PACKAGE_OK;
     if (staged && save_transaction(p, &transaction, TX_PUBLISH))
     {
         bool ready = volume_ready_set(p->volume, recover_locked(p, &ok));

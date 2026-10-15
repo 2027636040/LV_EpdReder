@@ -1,0 +1,10 @@
+{
+  "base": "a25ebccdb986a98070287cf1701dc5adb10a265d",
+  "patches": [
+    {"file": "lvgl-cache.patch", "description": "Preserve full cache comparison results", "upstream": ["http://10.21.10.179:85/c/SiFli-SDK/+/9835"]},
+    {"file": "lvgl-epic.patch", "description": "Complete LVGL V9 EPIC tasks correctly", "upstream": ["http://10.21.10.179:85/c/SiFli-SDK/+/9899"]},
+    {"file": "sdcard.patch", "description": "Expose per-host card change requests and state", "upstream": ["http://10.21.10.179:85/c/SiFli-SDK/+/10025"]},
+    {"file": "modules.patch", "description": "Module allocation failure cleanup", "upstream": ["http://10.21.10.179:85/c/SiFli-SDK/+/9965"]},
+    {"file": "certificates.patch", "description": "Existing generated public CA bundle used by this firmware; not a new SDK review", "upstream": []}
+  ]
+}

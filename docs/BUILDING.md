@@ -1,10 +1,28 @@
 # 平台与动态应用构建
 
-在仓库根目录激活当前 SDK 环境：
+## 首次准备
+
+在仓库根目录使用仓库锁定的 SDK，而不是远端最新 SDK：
 
 ```powershell
+git submodule update --init --recursive
 . .\SiFli-SDK\export.ps1
+python tools/prepare_build.py
 ```
+
+准备脚本先检查 SDK 基线，应用 `patches/SiFli-SDK/` 中的版本化补丁，再创建本地
+SD 卡组件包，并运行 `sdk.py sf-pkg install`。此时不传 `--board`，确保组件的
+Kconfig 在第一次板级配置解析前就已生成。SDK 补丁列表及上游评审见
+`patches/SiFli-SDK/series.json`。重复执行会跳过已应用的补丁；遇到冲突会停止，
+不覆盖现有 SDK 修改。首次运行需要 Conan 可访问 SDK 配置的 `artifactory` 基础包源。
+
+SDK 基线、补丁或 SD 组件更新后重新执行准备脚本，普通增量构建无需执行。
+SDK 子模块指针与项目配置是一组：不要使用 `git submodule update --remote`，也不要
+单独切换 SDK 分支。新 SDK 的 Tiny TTF 配置定义与当前项目不同，混用会触发重复
+choice 警告。
+
+下列命令均从仓库根目录执行。已经进入 `project/` 时，去掉 `-C project`；不要让
+SCons 尝试进入不存在的 `project/project`。
 
 ## 平台单独编译
 
@@ -29,6 +47,18 @@ scons -C project --board=sf32lb57-lcd-gyd7n6_epd_hcpu --board_search_path=../boa
 `project/build_sf32lb57-lcd-gyd7n6_epd_hcpu/`；单独构建应用时需指定
 `FIRMWARE=build_sf32lb57-lcd-gyd7n6_epd_hcpu`。引脚和硬件配置见
 [LCD DevKit 板级说明](../boards/sf32lb57-lcd-gyd7n6_epd/README.md)。
+
+EPD DevKit 专用载板使用同样的项目侧板型搜索方式：
+
+```powershell
+scons -C project --board=sf32lb57-epd-gyd7n6_hcpu --board_search_path=../boards APPS=all PREINSTALL=weather,books STORAGE_IMAGE=1 -j8
+```
+
+该命令编译平台与六个正式应用，只预装天气和书架。产物位于
+`project/build_sf32lb57-epd-gyd7n6_hcpu/`；单独编译应用时指定
+`FIRMWARE=build_sf32lb57-epd-gyd7n6_hcpu`。只需要平台时省略 `APPS`、
+`PREINSTALL` 和 `STORAGE_IMAGE`。引脚和外设配置见
+[EPD DevKit 板级说明](../boards/sf32lb57-epd-gyd7n6/README.md)。
 
 ## 单个、批量和全部应用
 
@@ -120,10 +150,8 @@ SDK 原生制镜工具使用 Windows 系统 ANSI 编码保存文件名。非 UTF
 
 ## 动态应用调试符号
 
-固件、动态应用和私有库使用 GNU build-id 匹配精确符号。正常构建在
-`project/build_<board>/debug-artifacts/` 中保留符号和单一清单，不把调试信息放入安装包。
-完整调试包按需执行 `tools/debug_artifacts.py` 导出；故障夹具仅在显式
-`DIAG_FIXTURES=1` 时构建。命令、转储范围和手工 GDB 操作见
+SDK 构建生成固件 `main.elf`、模块 `.so` 和带完整调试信息的 `.so.nostrip`。
+开发者应保存每次发布的配套文件、源码和配置。现场采集与符号定位复用 SDK 工具和 GDB，见
 [动态应用故障取证](DYNAMIC_APP_DEBUGGING.md)。
 
 ## 独立开发与发布

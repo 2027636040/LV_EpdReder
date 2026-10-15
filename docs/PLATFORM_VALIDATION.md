@@ -17,7 +17,7 @@
 | 类型声明 | `test_content_manifest.py` | 两项通过，检查源清单验证与安装清单保留。 |
 | 看板和预览 | `test_board_preview.py` | 十项通过，复用设备布局 C 代码及 SDK cJSON，覆盖分配失败、越界、摘要和 SVG 输出。 |
 | 发布目录 | `test_release_catalog.py` | 共 23 项；Windows 通过 21 项，跳过两项符号链接权限测试；Linux 通过 21 项，跳过两项 Windows junction 测试，互补覆盖全部用例。包含索引格式、声明负载、摘要一致性和发布目录边界。 |
-| 构建和打包 | `test_app_build.py`、`test_package_capacity.py`、`test_debug_artifacts.py` | 分别十项、一项、十一项通过；包括未提供独立图标的应用打包。 |
+| 构建和打包 | `test_app_build.py`、`test_package_capacity.py` | 分别十项、一项通过；包括未提供独立图标的应用打包。 |
 | 独立开发包 | `test_app_sdk.py` | 十七项通过，无跳过；两板各三个示例在移位目录真实编译、检查与打包，禁用 Python 对原仓库的读取。 |
 | 文档 | `test_documentation.py` | 所有注册应用都有设计文档；维护入口的本地链接可达。 |
 
@@ -45,7 +45,7 @@ scons -C project --board=sf32lb57-lcd-gyd7n6_epd_hcpu --board_search_path=../boa
 | 内置资源 ROM2 使用 | 5,635,054 / 8,388,608 字节 | 5,635,054 / 8,388,608 字节 |
 | 应用开发包 | `app-sdk/`，393 个头文件、559 个导出符号 | `app-sdk/`，393 个头文件、559 个导出符号 |
 
-各目录包含 `main.elf`、`main.bin/`、配套启动镜像和下载脚本、`fs_root.bin`、`app-resources/`、`debug-artifacts/`、导出的 `app-sdk/` 及 `app-catalogue.json`。六个应用为 weather、books、gallery、words、weread、board。books/gallery 版本分别为 10/9；两者数据版本仍为 1。各应用包均由对应固件重新编译并检查导入符号。
+各目录包含 `main.elf`、`main.bin/`、配套启动镜像和下载脚本、`fs_root.bin`、`app-resources/`、导出的 `app-sdk/` 及 `app-catalogue.json`。六个应用为 weather、books、gallery、words、weread、board。books/gallery 版本分别为 10/9；两者数据版本仍为 1。各应用包均由对应固件重新编译并检查导入符号。
 
 发布目录使用 `python tools/release_catalog.py --firmware <构建目录> --apps weather,books,gallery,words,weread,board` 生成，两板均返回六个包校验通过。生成时构建已结束；没有上传应用包或部署在线目录。
 

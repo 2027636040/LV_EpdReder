@@ -68,7 +68,7 @@ python -B moved-sdk/app_sdk.py package --app cfgdemo --module build-cfgdemo/cfgd
 
 ## 检查与安装包
 
-构建采用 profile 的 `module_cflags` 和 `module_ldflags`，补充 SDK `BuildLibrary` 使用的 `-e 0` 和 `--build-id=sha1`，并按 SDK 参数剥离安装 ELF。生成共享模块时允许保留未定义符号，之后逐项检查这些符号是否存在于固件的 RT-Thread 导出表。
+构建采用 profile 的 `module_cflags` 和 `module_ldflags`，补充 SDK `BuildLibrary` 使用的 `-e 0`，并按 SDK 参数剥离安装 ELF。生成共享模块时允许保留未定义符号，之后逐项检查这些符号是否存在于固件的 RT-Thread 导出表。
 
 `check` 验证模块为具有有效可加载段的 ARM 32 位小端共享 ELF，检查应用指纹、入口和描述符符号，以及全部导入。`package` 先执行相同检查，再复用平台的应用打包规则生成 `app.json`、`files.sha256` 和 `<id>.so`；应用目录下存在 `res/` 或 `icon.ezip` 时会一并打包。将完整应用目录交给平台现有应用安装流程。
 

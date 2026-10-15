@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="840" viewBox="0 0 960 840" role="img" aria-labelledby="title desc">
+<title id="title">系统组成与调用关系</title>
+<desc id="desc">系统界面与动态应用通过平台公开接口使用 SiFli SDK 和底层硬件。</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#778c98"/></marker></defs>
+<rect width="960" height="840" rx="12" fill="#fff"/>
+<g font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+<text x="32" y="40" text-anchor="start" font-size="25" font-weight="600" fill="#20313b"><tspan x="32" dy="0">系统组成与调用关系</tspan></text>
+<path d="M 254 240 V 282 H 480 V 318" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 706 240 V 282 H 480" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M 480 466 V 510" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 480 710 V 752" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="32" y="76" width="428" height="164" rx="10" fill="#edf7f5" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="52" y="108" text-anchor="start" font-size="21" font-weight="600" fill="#126c70"><tspan x="52" dy="0">常驻固件中的系统界面</tspan></text>
+<text x="52" y="138" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="52" dy="0">桌面 Main · 文件 files · 设置 settings</tspan><tspan x="52" dy="26">Launcher 组织系统界面与 UI 协调</tspan></text>
+<rect x="500" y="76" width="428" height="164" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="520" y="108" text-anchor="start" font-size="21" font-weight="600" fill="#20313b"><tspan x="520" dy="0">文件系统中的动态应用</tspan></text>
+<text x="520" y="138" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="520" dy="0">按需装载的页面、业务和私有资源</tspan><tspan x="520" dy="26">按需编入 HTTP、阅读、图片源码组件</tspan></text>
+<text x="498" y="306" text-anchor="start" font-size="17" font-weight="400" fill="#52646f"><tspan x="498" dy="0">函数调用、导航请求、任务与数据交接</tspan></text>
+<rect x="112" y="318" width="736" height="148" rx="10" fill="#edf7f5" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="132" y="350" text-anchor="start" font-size="21" font-weight="600" fill="#126c70"><tspan x="132" dy="0">平台公开接口与运行支持</tspan></text>
+<text x="132" y="380" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="132" dy="0">应用目录、安装器、模块引用、受管服务</tspan><tspan x="132" dy="26">网络、时间、存储、字体、输入、摘要</tspan><tspan x="132" dy="26">公共控件、内容交接、墨水屏刷新策略</tspan></text>
+<rect x="112" y="510" width="736" height="200" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="132" y="542" text-anchor="start" font-size="21" font-weight="600" fill="#20313b"><tspan x="132" dy="0">SiFli SDK</tspan></text>
+<text x="132" y="572" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="132" dy="0">app_fwk：应用与页面状态调度</tspan><tspan x="132" dy="26">RT-Thread：线程、同步、模块装载</tspan><tspan x="132" dy="26">LVGL V9 + EPIC：界面与绘图</tspan><tspan x="132" dy="26">DFS、lwIP、TLS、设备与外设驱动</tspan></text>
+<rect x="112" y="752" width="736" height="60" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<text x="132" y="784" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="132" dy="0">硬件：SF32LB57 · NOR · PSRAM · TF 卡 · 墨水屏</tspan></text>
+</g>
+</svg>

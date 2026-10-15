@@ -5,6 +5,7 @@
       "title": "平台总览",
       "description": "理解平台边界、公共能力和演进方向。",
       "documents": [
+        ["docs/DESIGN_INTENT.md", "开发意图与设计决策"],
         ["docs/ARCHITECTURE.md", "平台架构"],
         ["README.md", "工程概览"],
         ["docs/README.md", "开发文档索引"],
@@ -19,7 +20,8 @@
         ["docs/APP_SDK.md", "独立应用开发包"],
         ["docs/RELEASING.md", "参考组合与发布"],
         ["docs/STORAGE_MIGRATION.md", "存储迁移"],
-        ["boards/sf32lb57-lcd-gyd7n6_epd/README.md", "LCD DevKit 板型"]
+        ["boards/sf32lb57-lcd-gyd7n6_epd/README.md", "LCD DevKit 板型"],
+        ["boards/sf32lb57-epd-gyd7n6/README.md", "EPD DevKit 板型"]
       ]
     },
     {
@@ -64,8 +66,7 @@
       "description": "定位动态模块异常，收集现场并恢复设备。",
       "documents": [
         ["docs/DYNAMIC_APP_DEBUGGING.md", "动态应用故障取证"],
-        ["docs/RECOVERY.md", "应用恢复操作"],
-        ["docs/DYNAMIC_APP_DIAGNOSTICS_PLAN.md", "故障诊断设计"]
+        ["docs/RECOVERY.md", "应用恢复操作"]
       ]
     },
     {
@@ -88,8 +89,6 @@
       "documents": [
         ["docs/PLATFORM_IMPLEMENTATION_TODO.md", "平台实施清单"],
         ["docs/PLATFORM_VALIDATION.md", "平台验收记录"],
-        ["docs/DYNAMIC_APP_DIAGNOSTICS_TODO.md", "故障诊断实施清单"],
-        ["docs/DYNAMIC_APP_DIAGNOSTICS_VALIDATION.md", "故障诊断验证"],
         ["docs/SD_CARD_COMPONENT_TODO.md", "SD 卡组件实施记录"],
         ["docs/PORTABLE_APPS_TODO.md", "随卡应用实施记录"],
         ["docs/WEREAD_IMPLEMENTATION_TODO.md", "微信读书实施记录"],

@@ -10,11 +10,8 @@ typedef void (*ui_page_lifecycle_t)(ui_page_id_t page, gui_app_msg_type_t messag
 bool ui_navigation_init(ui_page_lifecycle_t lifecycle, uint32_t page_memory_size);
 int ui_navigation_start(const char *app, ui_page_id_t root);
 bool ui_navigation_run(const char *app);
-bool ui_navigation_exit(const char *app);
 /* Navigation succeeds only when the requested foreground state is reached. */
 bool ui_navigation_open(ui_page_id_t page);
 bool ui_navigation_back(void);
-bool ui_navigation_back_to(ui_page_id_t page);
-bool ui_navigation_contains(ui_page_id_t page);
 
 #endif

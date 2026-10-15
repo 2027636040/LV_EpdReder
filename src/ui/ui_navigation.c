@@ -1,7 +1,6 @@
 #include "ui_navigation.h"
 #include "platform/app_catalog.h"
 #include "platform/epd_refresh.h"
-#include "gui_app_int.h"
 
 #define DBG_TAG "ui.nav"
 #define DBG_LVL DBG_INFO
@@ -79,7 +78,7 @@ bool ui_navigation_init(ui_page_lifecycle_t lifecycle, uint32_t memory_size)
     return true;
 }
 
-bool ui_navigation_contains(ui_page_id_t page)
+static bool page_present(ui_page_id_t page)
 {
     if (page < UI_PAGE_HOME || page >= UI_PAGE_COUNT) return false;
     const char *app = active_app();
@@ -103,7 +102,7 @@ bool ui_navigation_open(ui_page_id_t page)
     if (routes[page].root) return ui_navigation_run(routes[page].app);
     if (routes[page].app && strcmp(app, routes[page].app)) return false;
     int result;
-    if (ui_navigation_contains(page))
+    if (page_present(page))
         result = gui_app_goback_to_page(routes[page].page);
     else
         result = gui_app_create_page_for_app_ext(app, routes[page].page, page_message,
@@ -113,27 +112,10 @@ bool ui_navigation_open(ui_page_id_t page)
     return active_page() == page;
 }
 
-bool ui_navigation_exit(const char *app)
-{
-    if (!app_schedule_is_app_running(app)) return true;
-    if (gui_app_exit(app) != RT_EOK) return false;
-    gui_app_exec_now();
-    return app_schedule_is_app_running(app) == NULL;
-}
-
 bool ui_navigation_back(void)
 {
     ui_page_id_t previous = active_page();
     if (previous == UI_PAGE_HOME || gui_app_goback() != RT_EOK) return false;
     gui_app_exec_now();
     return active_app() != NULL && active_page() != previous;
-}
-
-bool ui_navigation_back_to(ui_page_id_t page)
-{
-    if (!ui_navigation_contains(page)) return false;
-    if (active_page() == page) return true;
-    if (gui_app_goback_to_page(routes[page].page) != RT_EOK) return false;
-    gui_app_exec_now();
-    return active_page() == page;
 }

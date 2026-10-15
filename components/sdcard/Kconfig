@@ -2,7 +2,8 @@ menuconfig PKG_USING_EPD_SDCARD
     bool "SD card media lifecycle service"
     depends on RT_USING_PIN && RT_USING_SDIO && BSP_USING_SD_LINE
     depends on RT_USING_DFS && RT_USING_DFS_ELMFAT
-    depends on SDIO_CARD_MODE = 0 && SD_INSERT_DETECT_PIN >= 0
+    depends on (BSP_USING_SDMMC1 && SDIO_CARD_MODE = 0) || (BSP_USING_SDMMC2 && SDIO2_CARD_MODE = 0)
+    depends on SD_INSERT_DETECT_PIN >= 0
     default n
     help
         Manage SD card detection and DFS FAT mount/unmount from a worker.

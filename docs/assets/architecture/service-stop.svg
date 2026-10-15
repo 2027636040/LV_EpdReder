@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="660" viewBox="0 0 960 660" role="img" aria-labelledby="title desc">
+<title id="title">受管服务停止与模块释放</title>
+<desc id="desc">停止请求使服务取消工作；工作线程和在途命令结束后，固件注销订阅，UI 完成清理，最后释放服务和模块引用。</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#778c98"/></marker></defs>
+<rect width="960" height="660" rx="12" fill="#fff"/>
+<g font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+<text x="32" y="40" text-anchor="start" font-size="25" font-weight="600" fill="#20313b"><tspan x="32" dy="0">受管服务停止与模块释放</tspan></text>
+<path d="M 446 132 H 514" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 721 188 V 224" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 514 280 H 446" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 239 336 V 372" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 446 428 H 514" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 721 484 V 520" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M 514 576 H 446" fill="none" stroke="#778c98" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="32" y="76" width="414" height="112" rx="10" fill="#edf7f5" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="59" cy="105" r="14" fill="#126c70"/>
+<text x="59" y="111" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="59" dy="0">1</tspan></text>
+<text x="84" y="112" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="84" dy="0">请求停止服务</tspan></text>
+<text x="52" y="142" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="52" dy="0">标记 stopping 并发送停止事件</tspan></text>
+<rect x="514" y="76" width="414" height="112" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="541" cy="105" r="14" fill="#126c70"/>
+<text x="541" y="111" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="541" dy="0">2</tspan></text>
+<text x="566" y="112" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="566" dy="0">应用工作线程返回</tspan></text>
+<text x="534" y="142" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="534" dy="0">检查取消状态，关闭业务资源</tspan></text>
+<rect x="514" y="224" width="414" height="112" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="541" cy="253" r="14" fill="#126c70"/>
+<text x="541" y="259" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="541" dy="0">3</tspan></text>
+<text x="566" y="260" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="566" dy="0">等待在途命令结束</tspan></text>
+<text x="534" y="290" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="534" dy="0">固件包装函数等待 callers 归零</tspan></text>
+<rect x="32" y="224" width="414" height="112" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="59" cy="253" r="14" fill="#126c70"/>
+<text x="59" y="259" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="59" dy="0">4</tspan></text>
+<text x="84" y="260" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="84" dy="0">固件确认工作线程结束</tspan></text>
+<text x="52" y="290" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="52" dy="0">注销网络订阅，设置 worker_done</tspan></text>
+<rect x="32" y="372" width="414" height="112" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="59" cy="401" r="14" fill="#126c70"/>
+<text x="59" y="407" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="59" dy="0">5</tspan></text>
+<text x="84" y="408" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="84" dy="0">UI 回调完成收尾</tspan></text>
+<text x="52" y="438" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="52" dy="0">在主线程释放 UI 阶段资源</tspan></text>
+<rect x="514" y="372" width="414" height="112" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="541" cy="401" r="14" fill="#126c70"/>
+<text x="541" y="407" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="541" dy="0">6</tspan></text>
+<text x="566" y="408" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="566" dy="0">释放服务对象与引用</tspan></text>
+<text x="534" y="438" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="534" dy="0">释放服务事件及持有的模块引用</tspan></text>
+<rect x="514" y="520" width="414" height="112" rx="10" fill="#f5f8fa" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="541" cy="549" r="14" fill="#126c70"/>
+<text x="541" y="555" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="541" dy="0">7</tspan></text>
+<text x="566" y="556" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="566" dy="0">等待模块全部引用归零</tspan></text>
+<text x="534" y="586" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="534" dy="0">页面、服务等使用者完成释放</tspan></text>
+<rect x="32" y="520" width="414" height="112" rx="10" fill="#edf7f5" stroke="#cad5dc" stroke-width="1.5"/>
+<circle cx="59" cy="549" r="14" fill="#126c70"/>
+<text x="59" y="555" text-anchor="middle" font-size="16" font-weight="600" fill="#fff"><tspan x="59" dy="0">8</tspan></text>
+<text x="84" y="556" text-anchor="start" font-size="20" font-weight="600" fill="#20313b"><tspan x="84" dy="0">SDK 清理并释放模块</tspan></text>
+<text x="52" y="586" text-anchor="start" font-size="18" font-weight="400" fill="#52646f"><tspan x="52" dy="0">回收动态模块的装载内存</tspan></text>
+</g>
+</svg>

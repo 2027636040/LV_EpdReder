@@ -34,7 +34,6 @@ void epd_service_wake(epd_service_t *service);
 void epd_service_ui_request(epd_service_t *service, uint32_t delay_ms);
 /* The worker publishes a copy; the UI reads it without calling module code. */
 void epd_service_publish_summary(epd_service_t *service, const char *text);
-void app_service_summary(const char *id, char *text, size_t capacity);
 /* Resident snapshots: no module callback or borrowed pointer. The revision
  * changes on publication/removal, not on repeated identical publications. */
 uint32_t epd_app_summary_revision(void);

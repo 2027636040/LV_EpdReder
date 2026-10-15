@@ -42,8 +42,8 @@ def make_sdk(root):
     cflags, ldflags = app_sdk.compiler_flags(profile)
     recipe = {'sdk_format': app_sdk.FORMAT, 'board': profile['board'], 'build_id': profile['build_id'],
               'compiler': profile['compiler'], 'cflags': cflags,
-              'ldflags': ldflags + ['-e', '0', '-Wl,--build-id=sha1'],
-              'strip_flags': ['-R', '.hash', '--keep-section=.note.gnu.build-id'],
+              'ldflags': ldflags + ['-e', '0'],
+              'strip_flags': ['-R', '.hash'],
               'include_paths': ua['CPPPATH'], 'defines': ua['CPPDEFINES'],
               'export_count': 2, 'public_headers': [],
               'files': {p.relative_to(root).as_posix(): app_sdk.digest(p)

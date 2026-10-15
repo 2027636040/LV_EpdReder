@@ -5,6 +5,7 @@
 ## 文档入口
 
 - [网页知识库](doc/index.html)：离线阅读、分类导航、全文搜索与页内目录。
+- [开发意图与设计决策](docs/DESIGN_INTENT.md)：目标、选择理由、代价、历史变更及当前差距。
 - [平台架构](docs/ARCHITECTURE.md)：分层、执行流程、数据和资源所有权。
 - [开发文档索引](docs/README.md)：应用开发、部署、诊断与各应用设计。
 - [平台与应用构建](docs/BUILDING.md)：环境、板型、应用选择和工厂预装。
@@ -16,25 +17,31 @@
 | 项目 | 当前参考配置 |
 | --- | --- |
 | 主控 | SF32LB57GYD7N6 |
-| 载板 | SDK DPI-HDK，或项目内 LCD DevKit 配置 |
-| 显示 | E0470A03，UI 为 684×1216 竖屏；两种载板均连接墨水屏 |
+| 载板 | EPD DevKit 专用载板；保留 SDK DPI-HDK 和项目内 LCD DevKit 配置 |
+| 显示 | E0470A03，UI 为 684×1216 竖屏；三种载板均连接墨水屏 |
 | 存储 | 内部 NOR 使用 LittleFS，TF 使用 FatFs |
 | 网络 | 蓝牙 PAN；Wi-Fi 适配接口已预留，具体驱动尚未接入 |
 | 输入 | 平台统一触摸与开发板按键，实际引脚和触摸装配按板型确定 |
 
 SDK 通过仓库子模块与本地补丁管理。屏幕驱动和波形位于
-`SiFli-SDK/customer/peripherals/display/epd_e0470a03/`。
+`src/boards/epd_e0470a03_57x/`。
 SD 组件由 `project/sf-pkg.yaml` 声明，准备方法见 [组件说明](components/sdcard/README.md)。
 精确构建配置记录在板型输出目录的 `app-profile.json` 中。
 
 ## 快速构建
 
-在仓库根目录的 PowerShell 中激活 SDK：
+首次克隆后，在仓库根目录的 PowerShell 中准备锁定的 SDK 和 SD 组件，再构建：
 
 ```powershell
+git submodule update --init --recursive
 . .\SiFli-SDK\export.ps1
+python tools/prepare_build.py
 scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu -j8
 ```
+
+`prepare_build.py` 应用仓库内的 SDK 补丁，并通过 Conan 和 SDK 原生入口安装 SD 组件。
+SDK 基线、补丁或组件更新后重新执行；普通增量编译直接运行 SCons。
+不要把子模块更新到远端最新版本。若已进入 `project/` 目录，构建命令省略 `-C project`。
 
 默认只编译平台，不依赖动态应用源码、单词词库或 Node.js。SDK 原生工具生成
 `fs_root.bin`，普通下载清单不包含这个文件系统镜像。
@@ -46,6 +53,14 @@ scons -C project --board=sf32lb57-lcd-gyd7n6_epd_hcpu --board_search_path=../boa
 ```
 
 载板映射见 [LCD DevKit 说明](boards/sf32lb57-lcd-gyd7n6_epd/README.md)。
+
+EPD DevKit 专用载板使用：
+
+```powershell
+scons -C project --board=sf32lb57-epd-gyd7n6_hcpu --board_search_path=../boards -j8
+```
+
+引脚、触摸接入及配套应用构建见 [EPD DevKit 说明](boards/sf32lb57-epd-gyd7n6/README.md)。
 
 ### 动态应用
 
