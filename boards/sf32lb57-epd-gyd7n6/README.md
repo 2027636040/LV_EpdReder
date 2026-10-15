@@ -18,6 +18,7 @@ TF Card、Sensor & Key、Power 页及 `57x DevKit-EPD ioconfig-09052026.xlsx`。
 | TPS65185 I²C | I2C1，PA20 SCL、PA21 SDA，七位地址 0x68 |
 | TPS WAKEUP、PWRCOM、PWRUP | PA42、43、44 |
 | TPS GOOD | PA52，输入上拉 |
+| AW99703 前光 | I2C1，七位地址 0x36，PA53 使能；通道 2 冷光、通道 3 暖光 |
 | TF 卡 SDMMC2 | PA47 CLK、48 CMD、49 D0、50 D1、45 D2、46 D3，四位总线 |
 | TF 卡检测 | PA51，低电平表示插卡 |
 | 触摸 I²C | I2C2，PA1 SCL、PA2 SDA，使用模组电源上的外部上拉 |
@@ -49,9 +50,11 @@ SDMMC2 的 SDK 设备名是 `sd1`，平台通过 `EPD_SDCARD_DEVICE_NAME="sd1"`
 ## 外设状态
 
 EPD、触摸供电、TF 卡、串口、RTC、蓝牙 PAN 和开发板 ADC 按键接入现有平台。
-Wi-Fi、AW99703 前光、音频功放和数字麦克风的供电使能初始保持低电平。
-AW99703 使用 I²C 调光，未连接 PWM；本板不启用旧载板的 PWM 背光配置。
-Wi-Fi 联网、前光调光及充电状态业务由相应驱动或服务后续接入。
+AW99703 通过 `lcdlight` 设备接入屏幕亮度接口，使用 I²C 线性调光，
+冷、暖两路同步调节。开机采用 SDK 默认的 50% 亮度并保持常亮，
+不随墨水屏高压关闭而熄灭。PWM 引脚未连接。
+Wi-Fi、音频功放和数字麦克风的供电使能初始保持低电平。
+Wi-Fi 联网及充电状态业务由相应驱动或服务后续接入。
 
 ## 构建
 

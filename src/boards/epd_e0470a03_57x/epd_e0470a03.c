@@ -915,7 +915,14 @@ static void LCD_SetColorMode(LCDC_HandleTypeDef *hlcdc, uint16_t color_mode)
 
 static void LCD_SetBrightness(LCDC_HandleTypeDef *hlcdc, uint8_t br)
 {
-
+#ifdef BSP_USING_BOARD_SF32LB57_EPD_GYD7N6
+    rt_device_t device = rt_device_find("lcdlight");
+    if (device && rt_device_open(device, RT_DEVICE_OFLAG_RDWR) == RT_EOK)
+    {
+        rt_device_write(device, 0, &br, 1);
+        rt_device_close(device);
+    }
+#endif
 }
 
 static void IdleModeOn(LCDC_HandleTypeDef *hlcdc)

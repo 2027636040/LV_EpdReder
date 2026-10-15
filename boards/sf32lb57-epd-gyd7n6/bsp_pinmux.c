@@ -38,7 +38,7 @@ void BSP_PIN_Init(void)
     HAL_PIN_Set(PAD_PA06, GPIO_A6, PIN_NOPULL, 1);  /* USB_DET */
     HAL_PIN_Set(PAD_PA07, GPIO_A7, PIN_PULLUP, 1);  /* CHG_STATUS */
 
-    /* Keep unused peripheral power enables low at initialization. */
+    /* Keep peripheral power enables low until their drivers start. */
     HAL_PIN_Set(PAD_PA08, GPIO_A8, PIN_NOPULL, 1);
     HAL_PIN_Set(PAD_PA09, GPIO_A9, PIN_NOPULL, 1);
     HAL_PIN_Set(PAD_PA53, GPIO_A53, PIN_NOPULL, 1);
