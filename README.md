@@ -2,16 +2,6 @@
 
 基于 SiFli SDK、RT-Thread 和 LVGL V9 的墨水屏应用平台。主固件提供桌面、设置、文件管理、存储、网络和动态应用运行支持；天气、书架、图库、单词、微信读书及信息看板分别构建和安装。
 
-## 文档入口
-
-- [网页知识库](doc/index.html)：离线阅读、分类导航、全文搜索与页内目录。
-- [开发意图与设计决策](docs/DESIGN_INTENT.md)：目标、选择理由、代价、历史变更及当前差距。
-- [平台架构](docs/ARCHITECTURE.md)：分层、执行流程、数据和资源所有权。
-- [开发文档索引](docs/README.md)：应用开发、部署、诊断与各应用设计。
-- [平台与应用构建](docs/BUILDING.md)：环境、板型、应用选择和工厂预装。
-- [平台演进](docs/PLATFORM_ROADMAP.md)与[技术储备](docs/TECHNICAL_RESERVES.md)：已实现能力与后续设计。
-- [实施与验证清单](docs/PLATFORM_IMPLEMENTATION_TODO.md)：本轮集成状态及上板检查。
-
 ## 硬件与依赖
 
 | 项目 | 当前参考配置 |
@@ -102,7 +92,6 @@ scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu PREINSTALL=weather,books ST
 | gallery | PNG/JPEG 等比显示与 16 灰阶处理 | [设计](modules/gallery/DESIGN.md) |
 | words | 统一离线词库、学习范围和 FSRS-6 复习 | [设计](modules/words/DESIGN.md) |
 | weread | 登录、在线书架、章节缓存和阅读 | [设计](modules/weread/DESIGN.md) |
-| board | 配置式信息卡片与公共摘要 | [模板与预览](docs/BOARD_TEMPLATES.md) |
 | hello | 页面导航与受管服务开发示例 | [设计](modules/hello/DESIGN.md) |
 
 公共 HTTP、图片和阅读视图源码位于 `modules/common/`。
@@ -112,14 +101,10 @@ scons -C project --board=dpi-hdk_lb57gyd7n6_epd_hcpu PREINSTALL=weather,books ST
 ## 存储、显示与诊断
 
 应用安装在内部存储或 TF 卡，业务数据和缓存跟随安装位置。TF 卡移除会触发会话失效与协作退出；
-再次插入后通过加载确认启用卡内应用。安装及迁移规则见 [应用开发](docs/APPLICATION_DEVELOPMENT.md)。
+再次插入后通过加载确认启用卡内应用。
 
 页面切换触发全刷并重置周期计数；同页内容更新保留全刷周期；状态栏小范围自动更新不累计周期。
 应用不控制扫描时序或波形。字体采用内置 MiSans，压缩资源启动解压至 PSRAM，字形像素按需缓存。
 
-动态模块共享系统地址空间。故障定位使用精确符号与模块地址，见
-[动态应用故障取证](docs/DYNAMIC_APP_DEBUGGING.md)；问题应用的停用与恢复见
-[恢复操作](docs/RECOVERY.md)。
 
-低功耗、离线 OTA、语音输入等尚未实施内容，统一在[技术储备](docs/TECHNICAL_RESERVES.md)中说明，
-不以设置占位项或方案文档作为功能已经完成的依据。
+
