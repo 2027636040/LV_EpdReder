@@ -1,1 +1,0 @@
-/* No POSIX calls are needed by the storage adapter. */
