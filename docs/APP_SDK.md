@@ -7,7 +7,7 @@
 在 PowerShell 中激活工具链，并指定已有的板级构建目录：
 
 ```powershell
-cd D:/program/LV_EpdReder
+cd D:/program/sf-candio
 . ./SiFli-SDK/export.ps1
 python -B tools/app_sdk.py export --firmware project/build_dpi-hdk_lb57gyd7n6_epd_hcpu --output C:/app-dev/dpi-sdk
 python -B tools/app_sdk.py export --firmware project/build_sf32lb57-lcd-gyd7n6_epd_hcpu --output C:/app-dev/lcd-sdk

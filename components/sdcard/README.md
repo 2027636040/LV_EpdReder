@@ -214,7 +214,7 @@ python -B -m unittest discover -s tests -v
 在 Windows 的 **x86 MSVC 开发者命令提示符**中设置 `SIFLI_SDK`，从组件目录执行：
 
 ```bat
-set SIFLI_SDK=D:\program\LV_EpdReder\SiFli-SDK
+set SIFLI_SDK=D:\program\sf-candio\SiFli-SDK
 python -B tests\run_mmcsd_change_tests.py
 ```
 

@@ -45,7 +45,7 @@ JSON 解析使用 cJSON 的长度接口并检查尾部完整消费。cJSON 内�
 在 Visual Studio x64 Native Tools Command Prompt 中执行：
 
 ```bat
-cd /d D:\program\LV_EpdReder\modules\weread\client\tests
+cd /d D:\program\sf-candio\modules\weread\client\tests
 if not exist build mkdir build
 cd build
 cl /nologo /std:c11 /W4 /WX /fsanitize=address /Zi /D_CRT_SECURE_NO_WARNINGS /DWR_MBEDTLS_SELF_TEST /I..\include /I..\.. /I..\..\..\..\common\http ..\test_client.c ..\..\wr_client.c ..\..\wr_json.c ..\..\wr_models.c ..\..\wr_protocol.c ..\..\private\wr_cjson.c ..\..\private\wr_md5.c ..\..\private\wr_base64.c /Fe:test_client.exe
